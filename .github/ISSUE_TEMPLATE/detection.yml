@@ -1,0 +1,31 @@
+name: Site not detected correctly
+description: A series or chapter wasn't tracked, or was tracked with the wrong details.
+labels: [detection]
+body:
+  - type: input
+    id: url
+    attributes:
+      label: Page address
+      description: The series or chapter page. Remove anything personal from the address.
+      placeholder: https://example.com/manga/some-series/chapter-12/
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of page is it?
+      options: [Series page, Chapter page, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: inspector
+    attributes:
+      label: Detection Inspector output
+      description: Side panel → ⋯ → Detection Inspector, then copy what it shows (page kind, series, chapter, confidence, adapter, evidence).
+      render: text
