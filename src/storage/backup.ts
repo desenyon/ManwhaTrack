@@ -1,0 +1,424 @@
+// Versioned, portable backups. Derived fields (summaries, search keys) are not exported;
+// they are recomputed on import. Import validates everything before a single
+// transaction writes it, so a bad file can never corrupt the current library.
+
+import type { Chapter, CoverAsset, ReadingEvent, Series, SeriesSource } from "../shared/types/models";
+import type { Settings } from "../shared/types/settings";
+import { read, withTx, type Tx } from "./db";
+import { SCHEMA_VERSION } from "./migrations";
+import { newId, repairChapter, repairEvent, repairSeries, repairSource, titleKeysFor } from "./schema";
+import { getSeriesTx, putSeriesTx, refreshSeriesTx } from "./repositories/series";
+import { mergeChapterInto, mergeSeriesFields } from "./repositories/sources";
+import { getSettings, repairSettings, saveSettings } from "./repositories/settings";
+import { getQueue } from "./repositories/queue";
+import { normalizeTitle } from "../detection/normalization/title";
+import { isSafeHttpUrl } from "../detection/normalization/url";
+
+export const EXPORT_VERSION = 1;
+const APP = "ManwhaTrack";
+
+type PortableSeries = Omit<Series, "summary" | "titleKeys" | "normalizedTitle">;
+
+export interface PortableCover {
+  id: string;
+  mimeType: string;
+  width?: number;
+  height?: number;
+  sourceUrl?: string;
+  origin: CoverAsset["origin"];
+  capturedAt: number;
+  data: string; // base64
+}
+
+export interface BackupFile {
+  application: typeof APP;
+  exportVersion: number;
+  exportedAt: string;
+  schemaVersion: number;
+  series: PortableSeries[];
+  sources: SeriesSource[];
+  chapters: Chapter[];
+  history: ReadingEvent[];
+  settings: Partial<Settings>;
+  queue: string[];
+  covers?: PortableCover[];
+}
+
+// ------------------------------------------------------------------ export
+
+export async function exportLibrary(opts: { includeCovers?: boolean; seriesIds?: string[] } = {}): Promise<BackupFile> {
+  const data = await read(["series", "sources", "chapters", "events", "covers"], async (t) => ({
+    series: await t.getAll<Series>("series"),
+    sources: await t.getAll<SeriesSource>("sources"),
+    chapters: await t.getAll<Chapter>("chapters"),
+    events: await t.getAll<ReadingEvent>("events"),
+    covers: opts.includeCovers ? await t.getAll<CoverAsset>("covers") : [],
+  }));
+  const only = opts.seriesIds ? new Set(opts.seriesIds) : null;
+  const keep = <T extends { seriesId: string }>(x: T) => !only || only.has(x.seriesId);
+  const series = data.series.filter((s) => !s.removedAt && (!only || only.has(s.id)));
+  const coverIds = new Set(series.flatMap((s) => [s.coverId, s.detectedCoverId]).filter(Boolean) as string[]);
+
+  const covers: PortableCover[] = [];
+  if (opts.includeCovers) {
+    for (const c of data.covers) {
+      if (!coverIds.has(c.id) || !c.blob) continue;
+      covers.push({
+        id: c.id,
+        mimeType: c.mimeType,
+        width: c.width,
+        height: c.height,
+        sourceUrl: c.sourceUrl,
+        origin: c.origin,
+        capturedAt: c.capturedAt,
+        data: await blobToBase64(c.blob),
+      });
+    }
+  }
+
+  const settings = await getSettings();
+  const queue = await getQueue();
+  return {
+    application: APP,
+    exportVersion: EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    schemaVersion: SCHEMA_VERSION,
+    series: series.map(({ summary: _s, titleKeys: _t, normalizedTitle: _n, ...rest }) => rest),
+    sources: data.sources.filter(keep),
+    chapters: data.chapters.filter(keep),
+    history: data.events.filter(keep),
+    settings: only ? {} : settings,
+    queue: queue.filter((id) => !only || only.has(id)),
+    ...(opts.includeCovers ? { covers } : {}),
+  };
+}
+
+const CSV_FIELDS = ["Title", "Status", "Last Completed Chapter", "Last Opened Chapter", "Preferred Source", "Series URL", "Last Read", "Rating", "Tags", "Favorite"];
+
+export function toCsv(file: BackupFile): string {
+  const sources = new Map(file.sources.map((s) => [s.id, s]));
+  const chapters = new Map(file.chapters.map((c) => [c.id, c]));
+  const rows = file.series.map((s) => {
+    const src = sources.get(s.preferredSourceId ?? s.sourceIds[0] ?? "");
+    return [
+      s.title,
+      s.status,
+      chapters.get(s.lastCompletedChapterId ?? "")?.chapterLabel ?? "",
+      chapters.get(s.lastOpenedChapterId ?? "")?.chapterLabel ?? "",
+      src?.hostname ?? "",
+      src?.seriesUrl ?? "",
+      s.lastReadAt ? new Date(s.lastReadAt).toISOString() : "",
+      s.personalRating?.toString() ?? "",
+      s.tags.join("; "),
+      s.favorite ? "yes" : "",
+    ];
+  });
+  return [CSV_FIELDS, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
+}
+
+function csvCell(v: string): string {
+  // Prevent spreadsheet formula injection from scraped titles.
+  const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+// ------------------------------------------------------------------ parse + validate
+
+/** Upgrades older export formats step by step. */
+export const EXPORT_MIGRATIONS: Record<number, (f: Record<string, unknown>) => Record<string, unknown>> = {
+  // 1: (f) => ({ ...f, exportVersion: 2, ... }),
+};
+
+export type ParseResult = { ok: true; file: BackupFile; invalid: number } | { ok: false; error: string };
+
+export function parseBackup(text: string): ParseResult {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "Import file is invalid: it is not valid JSON." };
+  }
+  if (!raw || typeof raw !== "object") return { ok: false, error: "Import file is invalid." };
+  let f = raw as Record<string, unknown>;
+  if (f.application !== APP) return { ok: false, error: "Import file is invalid: this is not a ManwhaTrack backup." };
+  let version = typeof f.exportVersion === "number" ? f.exportVersion : NaN;
+  if (!Number.isInteger(version) || version < 1) return { ok: false, error: "Import file is invalid: unknown backup version." };
+  if (version > EXPORT_VERSION) return { ok: false, error: "This backup was made by a newer version of ManwhaTrack. Update the extension, then import again." };
+  while (version < EXPORT_VERSION) {
+    const step = EXPORT_MIGRATIONS[version];
+    if (!step) return { ok: false, error: `Import file is invalid: cannot upgrade backup version ${version}.` };
+    f = step(f);
+    version++;
+  }
+
+  let invalid = 0;
+  const arr = (k: string) => (Array.isArray(f[k]) ? (f[k] as Record<string, unknown>[]) : []);
+  const clean = <T>(items: Record<string, unknown>[], repair: (x: never) => T | null): T[] => {
+    const out: T[] = [];
+    for (const it of items) {
+      const r = it && typeof it === "object" ? repair(sanitize(it) as never) : null;
+      if (r) out.push(r);
+      else invalid++;
+    }
+    return out;
+  };
+
+  const series = clean(arr("series"), repairSeries);
+  const seriesIds = new Set(series.map((s) => s.id));
+  const sources = clean(arr("sources"), repairSource).filter((s) => {
+    const ok = seriesIds.has(s.seriesId) && isSafeHttpUrl(s.seriesUrl);
+    if (!ok) invalid++;
+    return ok;
+  });
+  const sourceIds = new Set(sources.map((s) => s.id));
+  const chapters = clean(arr("chapters"), repairChapter).filter((c) => {
+    const ok = seriesIds.has(c.seriesId) && sourceIds.has(c.sourceId) && isSafeHttpUrl(c.url);
+    if (!ok) invalid++;
+    return ok;
+  });
+  const history = clean(arr("history"), repairEvent).filter((e) => seriesIds.has(e.seriesId));
+  const covers = arr("covers").filter((c): c is Record<string, unknown> & PortableCover => typeof c.id === "string" && typeof c.data === "string" && typeof c.mimeType === "string" && /^image\//.test(c.mimeType as string));
+
+  return {
+    ok: true,
+    invalid,
+    file: {
+      application: APP,
+      exportVersion: EXPORT_VERSION,
+      exportedAt: typeof f.exportedAt === "string" ? f.exportedAt : "",
+      schemaVersion: typeof f.schemaVersion === "number" ? f.schemaVersion : SCHEMA_VERSION,
+      series,
+      sources,
+      chapters,
+      history,
+      settings: f.settings && typeof f.settings === "object" ? (f.settings as Partial<Settings>) : {},
+      queue: Array.isArray(f.queue) ? (f.queue as unknown[]).filter((x): x is string => typeof x === "string") : [],
+      covers: covers.length ? covers : undefined,
+    },
+  };
+}
+
+/** Strips control characters from all strings in imported records. */
+function sanitize(v: unknown): unknown {
+  if (typeof v === "string") return v.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").slice(0, 20000);
+  if (Array.isArray(v)) return v.slice(0, 5000).map(sanitize);
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v)) if (k !== "__proto__" && k !== "constructor") out[k] = sanitize(x);
+    return out;
+  }
+  return v;
+}
+
+// ------------------------------------------------------------------ preview
+
+export interface ImportPreview {
+  series: number;
+  newSeries: number;
+  duplicates: { imported: string; existing: string }[];
+  chapters: number;
+  events: number;
+  covers: number;
+  invalid: number;
+  exportedAt: string;
+}
+
+async function matchExistingTx(t: Tx, s: PortableSeries, sources: SeriesSource[]): Promise<Series | undefined> {
+  const byId = await getSeriesTx(t, s.id);
+  if (byId) return byId;
+  for (const src of sources) {
+    const hit = await t.firstByIndex<SeriesSource>("sources", "canonicalSeriesUrl", src.canonicalSeriesUrl);
+    if (hit) return getSeriesTx(t, hit.seriesId);
+  }
+  const hits = await t.byIndex<Series>("series", "normalizedTitle", normalizeTitle(s.title));
+  return hits[0] ? getSeriesTx(t, hits[0].id) : undefined;
+}
+
+export async function previewImport(file: BackupFile, invalid = 0): Promise<ImportPreview> {
+  const bySeries = groupBy(file.sources, (s) => s.seriesId);
+  const duplicates = await read(["series", "sources"], async (t) => {
+    const out: ImportPreview["duplicates"] = [];
+    for (const s of file.series) {
+      const hit = await matchExistingTx(t, s, bySeries.get(s.id) ?? []);
+      if (hit) out.push({ imported: s.title, existing: hit.title });
+    }
+    return out;
+  });
+  return {
+    series: file.series.length,
+    newSeries: file.series.length - duplicates.length,
+    duplicates,
+    chapters: file.chapters.length,
+    events: file.history.length,
+    covers: file.covers?.length ?? 0,
+    invalid,
+    exportedAt: file.exportedAt,
+  };
+}
+
+// ------------------------------------------------------------------ apply
+
+export type ConflictMode = "merge" | "keep" | "replace";
+
+export interface ImportResult {
+  added: number;
+  merged: number;
+  skipped: number;
+}
+
+export async function applyImport(file: BackupFile, mode: ConflictMode, opts: { importSettings?: boolean } = {}): Promise<ImportResult> {
+  // Decode covers before the transaction (no non-IDB awaits allowed inside it).
+  const coverBlobs = new Map<string, CoverAsset>();
+  for (const c of file.covers ?? []) {
+    try {
+      coverBlobs.set(c.id, {
+        id: newId(),
+        blob: base64ToBlob(c.data, c.mimeType),
+        mimeType: c.mimeType,
+        width: c.width,
+        height: c.height,
+        sourceUrl: c.sourceUrl,
+        origin: c.origin === "custom" ? "custom" : "detected",
+        capturedAt: typeof c.capturedAt === "number" ? c.capturedAt : Date.now(),
+      });
+    } catch {
+      // Skip unreadable cover data; the series can re-download it later.
+    }
+  }
+
+  const sourcesBySeries = groupBy(file.sources, (s) => s.seriesId);
+  const chaptersBySource = groupBy(file.chapters, (c) => c.sourceId);
+  const eventsBySeries = groupBy(file.history, (e) => e.seriesId);
+  const result: ImportResult = { added: 0, merged: 0, skipped: 0 };
+
+  await withTx(["series", "sources", "chapters", "events", "covers", "meta"], "readwrite", async (t) => {
+    const idMap = new Map<string, string>();
+    for (const incoming of file.series) {
+      const srcs = sourcesBySeries.get(incoming.id) ?? [];
+      const existing = await matchExistingTx(t, incoming, srcs);
+      if (existing && mode === "keep") {
+        result.skipped++;
+        idMap.set(incoming.id, existing.id);
+        continue;
+      }
+
+      let target: Series;
+      if (existing) {
+        target = existing;
+        if (mode === "replace") {
+          Object.assign(target, pickUserData(incoming));
+        } else {
+          mergeSeriesFields(target, incoming as Series);
+        }
+        result.merged++;
+      } else {
+        target = { ...(incoming as Series), titleKeys: titleKeysFor(incoming.title, incoming.alternateTitles), sourceIds: [] };
+        if (await t.get("series", target.id)) target.id = newId();
+        result.added++;
+      }
+      target.removedAt = undefined;
+      const coverFor = (id?: string) => (id ? coverBlobs.get(id) : undefined);
+      const detected = coverFor(incoming.detectedCoverId);
+      const chosen = coverFor(incoming.coverId);
+      for (const c of [detected, chosen]) if (c && !(await t.get("covers", c.id))) await t.put("covers", c);
+      if (detected && (!existing || mode === "replace" || !target.detectedCoverId)) target.detectedCoverId = detected.id;
+      if (chosen && (!existing || mode === "replace" || !target.coverId)) target.coverId = chosen.id;
+      if (target.coverId && !(await t.get("covers", target.coverId))) target.coverId = target.detectedCoverId;
+      if (target.detectedCoverId && !(await t.get("covers", target.detectedCoverId))) target.detectedCoverId = undefined;
+      await putSeriesTx(t, target);
+      idMap.set(incoming.id, target.id);
+
+      const chapterIdMap = new Map<string, string>();
+      for (const src of srcs) {
+        let targetSource = await t.firstByIndex<SeriesSource>("sources", "canonicalSeriesUrl", src.canonicalSeriesUrl);
+        if (targetSource && targetSource.seriesId !== target.id) targetSource = undefined;
+        if (!targetSource) {
+          targetSource = { ...src, seriesId: target.id };
+          if (await t.get("sources", targetSource.id)) targetSource.id = newId();
+          if (target.preferredSourceId === src.id) target.preferredSourceId = targetSource.id;
+          await t.put("sources", targetSource);
+        }
+        for (const ch of chaptersBySource.get(src.id) ?? []) {
+          const same = await t.firstByIndex<Chapter>("chapters", "sourceKey", [targetSource.id, ch.key]);
+          if (same) {
+            if (mode === "replace") {
+              Object.assign(same, { completedAt: ch.completedAt, completionSource: ch.completionSource, maxProgress: ch.maxProgress, visitCount: Math.max(same.visitCount, ch.visitCount) });
+            } else {
+              mergeChapterInto(same, ch);
+            }
+            await t.put("chapters", same);
+            chapterIdMap.set(ch.id, same.id);
+          } else {
+            const copy = { ...ch, seriesId: target.id, sourceId: targetSource.id };
+            if (await t.get("chapters", copy.id)) copy.id = newId();
+            await t.put("chapters", copy);
+            chapterIdMap.set(ch.id, copy.id);
+          }
+        }
+      }
+      for (const e of eventsBySeries.get(incoming.id) ?? []) {
+        if (await t.get("events", e.id)) continue;
+        await t.put("events", { ...e, seriesId: target.id, chapterId: e.chapterId ? chapterIdMap.get(e.chapterId) ?? e.chapterId : undefined });
+      }
+      if (incoming.currentChapterId) {
+        const mapped = chapterIdMap.get(incoming.currentChapterId);
+        if (mapped && (!existing || mode === "replace")) target.currentChapterId = mapped;
+      }
+      await refreshSeriesTx(t, target.id, (s) => {
+        s.currentChapterId = target.currentChapterId ?? s.currentChapterId;
+        s.preferredSourceId = target.preferredSourceId ?? s.preferredSourceId;
+      });
+    }
+
+    if (file.queue.length) {
+      const q = (await t.get<{ key: string; value: string[] }>("meta", "queue"))?.value ?? [];
+      const mapped = file.queue.map((id) => idMap.get(id)).filter((x): x is string => !!x);
+      await t.put("meta", { key: "queue", value: [...new Set([...q, ...mapped])] });
+    }
+  });
+
+  if (opts.importSettings && file.settings && Object.keys(file.settings).length) {
+    await saveSettings(repairSettings({ ...(await getSettings()), ...file.settings }));
+  }
+  return result;
+}
+
+function pickUserData(s: PortableSeries): Partial<Series> {
+  return {
+    title: s.title,
+    alternateTitles: s.alternateTitles,
+    status: s.status,
+    favorite: s.favorite,
+    pinned: s.pinned,
+    personalRating: s.personalRating,
+    tags: s.tags,
+    notes: s.notes,
+    userFields: s.userFields,
+    hidden: s.hidden,
+  };
+}
+
+function groupBy<T>(xs: T[], key: (x: T) => string): Map<string, T[]> {
+  const m = new Map<string, T[]>();
+  for (const x of xs) {
+    const k = key(x);
+    const list = m.get(k);
+    if (list) list.push(x);
+    else m.set(k, [x]);
+  }
+  return m;
+}
+
+export async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+export function base64ToBlob(data: string, mimeType: string): Blob {
+  const bin = atob(data);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
+}
