@@ -1,0 +1,72 @@
+{
+  "manifest_version": 3,
+  "name": "ManwhaTrack",
+  "version": "0.0.0",
+  "description": "Automatically remembers the manhwa you read and where you stopped. Local-only: no account, no server.",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "sidePanel",
+    "alarms",
+    "contextMenus",
+    "offscreen",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "optional_permissions": [
+    "notifications"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "ManwhaTrack",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "omnibox": {
+    "keyword": "mt"
+  },
+  "commands": {
+    "_execute_action": {
+      "description": "Open ManwhaTrack"
+    },
+    "mark-current-read": {
+      "description": "Mark the current chapter read"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+  }
+}
