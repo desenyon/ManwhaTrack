@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
+import { Brand } from "../ui/Brand";
 import { useSettings, useTheme } from "../ui/hooks";
 import { GeneralSection } from "./views/General";
 import { DataSection } from "./views/Data";
@@ -32,6 +33,7 @@ export function App() {
   const [settings, update] = useSettings();
   useTheme(settings.theme);
   const [route, setRoute] = useState(sectionFromHash);
+  useLayoutEffect(() => { window.scrollTo({ top: 0 }); }, [route.id]);
 
   useEffect(() => {
     const onHash = () => setRoute(sectionFromHash());
@@ -46,7 +48,8 @@ export function App() {
   return (
     <div className="opts">
       <nav aria-label="Settings sections">
-        <div className="brand" style={{ padding: "0 10px 12px" }}>ManwhaTrack</div>
+        <div style={{ padding: "0 10px 12px" }}><Brand /></div>
+        <a href="library.html">Open full library ↗</a>
         {SECTIONS.map(([id, label]) => (
           <a key={id} href={`#${id}`} aria-current={route.id === id ? "page" : undefined}>{label}</a>
         ))}
