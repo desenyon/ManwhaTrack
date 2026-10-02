@@ -7,7 +7,7 @@ import { WriteRevokedError, write, type Tx } from "./db";
 import { createChapter, createSeries, createSource, titleKeysFor } from "./schema";
 import { getSeriesTx, putSeriesTx, refreshSeriesTx } from "./repositories/series";
 import { addEventTx, updateReadingPosition } from "./repositories/chapters";
-import { chapterLabelFromUrl, parseChapterLabel } from "../detection/normalization/chapter";
+import { chapterLabelFromUrl, correctJoinedChapterLabel, parseChapterLabel } from "../detection/normalization/chapter";
 import { canonicalizeUrl, isSafeHttpUrl, sourceHost, toUrl } from "../detection/normalization/url";
 import { normalizeTitle } from "../detection/normalization/title";
 
@@ -165,6 +165,11 @@ export async function upsertChapterListTx(
     if (existing) {
       const canon = canonicalizeUrl(link.url);
       let changed = false;
+      const corrected = correctJoinedChapterLabel(existing.chapterLabel, link.url);
+      if (corrected && parsed.key === parseChapterLabel(corrected).key && !existing.userFields.some(f => f === "label" || f === "number")) {
+        Object.assign(existing, { chapterLabel: parsed.label, chapterNumber: parsed.number, ordinal: parsed.ordinal, key: parsed.key, seasonNumber: parsed.season, volumeNumber: parsed.volume });
+        changed = true;
+      }
       if (!existing.lastOpenedAt && existing.canonicalUrl !== canon) {
         existing.url = link.url;
         existing.canonicalUrl = canon;
@@ -187,6 +192,12 @@ export async function upsertChapterListTx(
     .map((l) => ({ l, p: parseChapterLabel(l.label) }))
     .filter((x) => x.p.ordinal !== undefined)
     .sort((a, b) => b.p.ordinal! - a.p.ordinal!)[0];
+  const prior = source.latestKnownChapter;
+  const correction = prior?.url && correctJoinedChapterLabel(prior.label, prior.url);
+  if (correction && prior) {
+    const p = parseChapterLabel(correction);
+    source.latestKnownChapter = { ...prior, label: p.label, key: p.key, ordinal: p.ordinal };
+  }
   if (latest && (!source.latestKnownChapter?.ordinal || latest.p.ordinal! >= source.latestKnownChapter.ordinal)) {
     source.latestKnownChapter = { key: latest.p.key, label: latest.p.label, ordinal: latest.p.ordinal, url: latest.l.url };
   }
@@ -270,6 +281,10 @@ export async function trackChapterOpened(obs: PageObservation, opts: OpenOptions
       (await t.firstByIndex<Chapter>("chapters", "sourceKey", [r.source.id, parsed.key]));
     if (!chapter) chapter = createChapter({ seriesId: r.series.id, sourceId: r.source.id, label: ch.label, url: ch.url, now });
 
+    const corrected = correctJoinedChapterLabel(chapter.chapterLabel, ch.canonicalUrl);
+    if (corrected && parsed.key === parseChapterLabel(corrected).key && !chapter.userFields.some(f => f === "label" || f === "number")) {
+      Object.assign(chapter, { key: parsed.key, chapterNumber: parsed.number, ordinal: parsed.ordinal, seasonNumber: parsed.season, volumeNumber: parsed.volume });
+    }
     // A chapter first learned from a link or list gets the site's own label once opened.
     if (!chapter.userFields.includes("label") && parsed.key === chapter.key) {
       if (chapter.title === chapter.chapterLabel) chapter.title = parsed.label;
