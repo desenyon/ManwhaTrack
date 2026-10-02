@@ -24,6 +24,7 @@ import { ReadingTimer } from "../components/ReadingTimer";
 const GRID_PAGE = 120;
 
 export interface HomeProps {
+  expanded?: boolean;
   lib: ReturnType<typeof useLibrary>;
   settings: Settings;
   updateSettings: (p: Partial<Settings>) => Promise<void>;
@@ -65,6 +66,7 @@ export function HomeView(p: HomeProps) {
   const toast = useToast();
   const [gridLimit, setGridLimit] = useState(GRID_PAGE);
   const { lib, settings, actions } = p;
+  const layout = p.expanded ? settings.expandedLayout : settings.layout;
 
   const tabSeries = p.tab.state?.seriesId ? lib.byId.get(p.tab.state.seriesId) : undefined;
   const hero = !p.query
@@ -72,7 +74,7 @@ export function HomeView(p: HomeProps) {
         .filter((s) => inView(s, "continue") && (!p.collection || p.collection.seriesIds.includes(s.id)))
         .sort((a, b) => (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0))[0]
     : undefined;
-  const heroHidden = !hero || (tabSeries?.id === hero.id && p.tab.state?.observation.kind === "chapter");
+  const heroHidden = !hero || (p.expanded && p.view !== "continue" && !p.collection) || (tabSeries?.id === hero.id && p.tab.state?.observation.kind === "chapter");
 
   const onContinue = (s: Series, e: MouseEvent) => {
     const modifier = e.metaKey || e.ctrlKey || e.button === 1;
@@ -158,7 +160,7 @@ export function HomeView(p: HomeProps) {
               <Cover coverId={hero.coverId} title={hero.title} size="md" />
             </button>
             <div style={{ minWidth: 0 }}>
-              <div className="truncate" style={{ fontWeight: 650 }}>{hero.title}</div>
+              <div className="featured-title">{hero.title}</div>
               <div className="series-progress">
                 {hero.summary.continueLabel && <span className="meta-card tabular">{shortChapterLabel(hero.summary.continueLabel)}</span>}
                 {hero.summary.continueKind === "resume" && !!hero.summary.currentProgress && <span className="meta-card tabular">{Math.round(hero.summary.currentProgress * 100)}% read</span>}
@@ -219,13 +221,13 @@ export function HomeView(p: HomeProps) {
             onFilters={p.setFilters}
             hosts={p.hosts}
             tags={p.tags}
-            layout={settings.layout}
-            onLayout={(layout) => void p.updateSettings({ layout })}
+            layout={layout}
+            onLayout={(layout) => void p.updateSettings(p.expanded ? { expandedLayout: layout } : { layout })}
             count={p.visible.length}
           />
           {p.visible.length === 0 && p.collection && !p.query ? <div className="empty"><h2>This list is empty.</h2><p>Assign series from their menu, details, or a multiple selection.</p><button className="btn" onClick={p.onManageLists}>Manage lists</button></div> : p.visible.length === 0 ? (
             <EmptyState onManual={p.onManual} view={p.view} query={p.query} total={lib.series.length} />
-          ) : settings.layout === "grid" ? (
+          ) : layout === "grid" ? (
             <>
               <div className={`grid ${p.selecting ? "selecting" : ""}`} role="list" aria-label="Series">
                 {p.visible.slice(0, gridLimit).map((s) => (
