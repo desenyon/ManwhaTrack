@@ -5,6 +5,8 @@ import { applyImport, exportLibrary, parseBackup, previewImport, toCsv } from ".
 import { editSeries, getSeries, listSeries } from "../../src/storage/repositories/series";
 import { listChapters } from "../../src/storage/repositories/chapters";
 import { setDetectedCover } from "../../src/storage/repositories/covers";
+import { read, write } from "../../src/storage/db";
+import type { Chapter } from "../../src/shared/types/models";
 import { listEvents } from "../../src/storage/repositories/history";
 
 beforeEach(() => {
@@ -24,7 +26,7 @@ describe("export / import", () => {
     await seed();
     const file = await exportLibrary({ includeCovers: true });
     expect(file.application).toBe("ManwhaTrack");
-    expect(file.exportVersion).toBe(1);
+    expect(file.exportVersion).toBe(4);
     expect(file.series[0]).not.toHaveProperty("summary");
     expect(file.covers).toHaveLength(1);
 
@@ -118,4 +120,44 @@ describe("export / import", () => {
     expect(csv.split("\r\n")[0]).toContain("Title,Status");
     expect(csv).toContain("'=HYPERLINK(evil)");
   });
+});
+
+it("imports the latest valid reading position and rebases an explicitly replaced snapshot", async () => {
+  const result = await seed();
+  const position = (at: number, revision = 0) => ({ version: 1 as const, capturedAt: at, progressRevision: revision, readerOffset: at, readerHeight: 3000, viewportHeight: 700 });
+  await write(["chapters"], async t => {
+    const chapter = (await t.get<Chapter>("chapters", result.chapterId!))!;
+    chapter.readingPosition = position(100, chapter.progressRevision ?? 0);
+    await t.put("chapters", chapter);
+  });
+  const file = await exportLibrary();
+  const incoming = file.chapters.find(c => c.id === result.chapterId)!;
+  incoming.readingPosition = position(300, incoming.progressRevision ?? 0);
+  await applyImport(file, "merge");
+  let chapter = (await read(["chapters"], t => t.get<Chapter>("chapters", result.chapterId!)))!;
+  expect(chapter.readingPosition?.readerOffset).toBe(300);
+  expect(chapter.readingPosition?.progressRevision).toBe(chapter.progressRevision ?? 0);
+  await applyImport(file, "replace");
+  chapter = (await read(["chapters"], t => t.get<Chapter>("chapters", result.chapterId!)))!;
+  expect(chapter.progressRevision).toBeGreaterThan(incoming.progressRevision ?? 0);
+  expect(chapter.readingPosition?.readerOffset).toBe(300);
+  expect(chapter.readingPosition?.progressRevision).toBe(chapter.progressRevision);
+  incoming.readingPosition = position(900, (incoming.progressRevision ?? 0) + 50);
+  await applyImport(file, "replace");
+  chapter = (await read(["chapters"], t => t.get<Chapter>("chapters", result.chapterId!)))!;
+  expect(chapter.readingPosition).toBeUndefined();
+});
+
+it("does not adopt a viewport from a different URL with the same chapter source key", async () => {
+  const result = await seed();
+  const file = await exportLibrary();
+  const incoming = file.chapters.find(c => c.id === result.chapterId)!;
+  incoming.url = incoming.canonicalUrl = slChapter(999);
+  incoming.readingPosition = { version: 1, capturedAt: 500, progressRevision: incoming.progressRevision ?? 0, readerOffset: 500, readerHeight: 3000, viewportHeight: 700 };
+  for (const mode of ["merge", "replace"] as const) {
+    await applyImport(file, mode);
+    const chapter = (await read(["chapters"], t => t.get<Chapter>("chapters", result.chapterId!)))!;
+    expect(chapter.url).toBe(slChapter(31));
+    expect(chapter.readingPosition).toBeUndefined();
+  }
 });
