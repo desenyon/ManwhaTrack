@@ -54,13 +54,13 @@ export function GeneralSection({ settings, update }: SectionProps) {
           <option value="system">System</option><option value="on">On</option><option value="off">Off</option>
         </select>
       </Setting>
-      <Setting title="Library layout">
-        <select className="select" aria-label="Library layout" value={settings.layout} onChange={(e) => void update({ layout: e.target.value as Settings["layout"] })}>
+      <Setting title="Sidebar layout">
+        <select className="select" aria-label="Sidebar layout" value={settings.layout} onChange={(e) => void update({ layout: e.target.value as Settings["layout"] })}>
           <option value="list">Compact list</option>
           <option value="grid">Grid</option>
         </select>
       </Setting>
-      <Setting title="Continue opens in" desc="Ctrl/⌘-click or middle-click always opens a new tab.">
+      <Setting title="Continue opens in" desc="For other chapter actions in the sidebar. Resume opens a separate window. Ctrl/⌘-click or middle-click opens a new tab.">
         <select className="select" aria-label="Continue opens in" value={settings.continueIn} onChange={(e) => void update({ continueIn: e.target.value as Settings["continueIn"] })}>
           <option value="current">Current tab</option>
           <option value="new">New tab</option>
