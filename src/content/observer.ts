@@ -12,12 +12,15 @@ export interface PageWatcher {
 }
 
 export function watchPage(onChange: (reason: "url" | "dom") => void): PageWatcher {
+  let stopped = false;
+  let navigationTimer: ReturnType<typeof setTimeout> | undefined;
   let lastUrl = location.href;
   let reruns = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let observer: MutationObserver | null = null;
 
   const checkUrl = () => {
+    if (stopped) return false;
     if (location.href !== lastUrl) {
       lastUrl = location.href;
       reruns = 0;
@@ -29,9 +32,11 @@ export function watchPage(onChange: (reason: "url" | "dom") => void): PageWatche
   };
 
   const schedule = () => {
+    if (stopped) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = undefined;
+      if (stopped) return;
       if (checkUrl()) return;
       if (reruns >= MAX_SAME_URL_RERUNS) return;
       reruns++;
@@ -40,7 +45,7 @@ export function watchPage(onChange: (reason: "url" | "dom") => void): PageWatche
   };
 
   function ensureObserver() {
-    if (observer || !document.body) return;
+    if (stopped || observer || !document.body) return;
     observer = new MutationObserver((records) => {
       // Ignore attribute-only churn and tiny text updates.
       if (records.some((r) => r.addedNodes.length > 0)) schedule();
@@ -49,7 +54,11 @@ export function watchPage(onChange: (reason: "url" | "dom") => void): PageWatche
   }
 
   const nav = (globalThis as { navigation?: EventTarget }).navigation;
-  const onNav = () => setTimeout(checkUrl, 50);
+  const onNav = () => {
+    if (stopped) return;
+    if (navigationTimer) clearTimeout(navigationTimer);
+    navigationTimer = setTimeout(() => { navigationTimer = undefined; checkUrl(); }, 50);
+  };
   nav?.addEventListener("currententrychange", onNav);
   addEventListener("popstate", onNav);
   addEventListener("hashchange", onNav);
@@ -57,6 +66,8 @@ export function watchPage(onChange: (reason: "url" | "dom") => void): PageWatche
 
   return {
     stop() {
+      stopped = true;
+      if (navigationTimer) clearTimeout(navigationTimer);
       observer?.disconnect();
       observer = null;
       if (timer) clearTimeout(timer);
@@ -65,6 +76,7 @@ export function watchPage(onChange: (reason: "url" | "dom") => void): PageWatche
       removeEventListener("hashchange", onNav);
     },
     settle(solid) {
+      if (stopped) return;
       if (solid) reruns = MAX_SAME_URL_RERUNS;
       // Without the Navigation API, keep a mutation observer so pushState routes are noticed.
       if (solid && nav) {
