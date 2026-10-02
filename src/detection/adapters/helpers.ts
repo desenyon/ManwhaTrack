@@ -1,6 +1,6 @@
+import { linkLabel } from "../generic/links";
 import type { DetectedChapterLink, DetectedSeries } from "../types";
 import { hrefOf, imgSrc, qs, qsa, text } from "../metadata/dom";
-import { chapterLabelFromUrl, parseChapterLabel } from "../normalization/chapter";
 import { canonicalizeUrl } from "../normalization/url";
 import { cleanSeriesTitle, isPlausibleTitle } from "../normalization/title";
 
@@ -13,9 +13,7 @@ export function chapterLinksFrom(root: ParentNode, selector: string, base: strin
     const url = canonicalizeUrl(href);
     if (seen.has(url)) continue;
     seen.add(url);
-    const labelText = labelSelector ? text(qs(a, labelSelector) ?? a, 160) : text(a, 160);
-    const parsed = parseChapterLabel(labelText);
-    const label = parsed.kind === "special" ? chapterLabelFromUrl(new URL(url)) ?? parsed.label : parsed.label;
+    const label = linkLabel(labelSelector ? qs(a, labelSelector) ?? a : a, new URL(url));
     if (label) out.push({ label, url });
   }
   return out;
