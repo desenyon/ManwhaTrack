@@ -119,3 +119,9 @@ it('keeps measured time when progress is manually corrected', () => {
   vi.advanceTimersByTime(1000); tracker.stop();
   expect(sink.mock.calls.reduce((sum, [u]) => sum + u.readingTimeDeltaMs, 0)).toBe(3000);
 });
+
+it('pauses active time when no connected reader content is available', () => {
+  tracker = new ReaderProgress(() => null, .85, sink);
+  tracker.start(); vi.advanceTimersByTime(5000); tracker.stop();
+  expect(sink.mock.calls.reduce((sum, [u]) => sum + u.readingTimeDeltaMs, 0)).toBe(0);
+});
