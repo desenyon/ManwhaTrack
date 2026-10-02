@@ -3,6 +3,7 @@
 
 import type { Chapter, ReadingEvent, Series, SeriesSource, SeriesSummary, SeriesStatus } from "../shared/types/models";
 import { SERIES_STATUSES } from "../shared/types/models";
+import { sanitizeReadingPosition } from "../shared/reading-position";
 import { normalizeTitle } from "../detection/normalization/title";
 import { parseChapterLabel } from "../detection/normalization/chapter";
 import { canonicalizeUrl, sourceHost } from "../detection/normalization/url";
@@ -84,6 +85,7 @@ export function createChapter(init: { seriesId: string; sourceId: string; label:
     ordinal: p.ordinal,
     url: init.url,
     canonicalUrl: canonicalizeUrl(init.url),
+    progressRevision: 0,
     visitCount: 0,
     maxProgress: 0,
     readingTimeMs: 0,
@@ -150,6 +152,7 @@ export function repairSource(raw: Partial<SeriesSource> & Record<string, unknown
     coverCandidates: strArr(raw.coverCandidates),
     consecutiveFailures: num(raw.consecutiveFailures) ?? 0,
     disabled: bool(raw.disabled),
+    removedAt: num(raw.removedAt),
     discoveredAt: num(raw.discoveredAt) ?? now,
     updatedAt: num(raw.updatedAt) ?? now,
   };
@@ -176,11 +179,14 @@ export function repairChapter(raw: Partial<Chapter> & Record<string, unknown>): 
     chapterNumber: num(raw.chapterNumber) ?? parsed.number,
     url,
     canonicalUrl: str(raw.canonicalUrl) ?? canonicalizeUrl(url),
+    progressRevision: Math.max(0, Math.floor(num(raw.progressRevision) ?? 0)),
+    readingPosition: sanitizeReadingPosition(raw.readingPosition),
     visitCount: num(raw.visitCount) ?? 0,
     maxProgress: Math.max(0, Math.min(1, num(raw.maxProgress) ?? 0)),
     readingTimeMs: num(raw.readingTimeMs) ?? 0,
     discoveredAt: num(raw.discoveredAt) ?? num(raw.firstOpenedAt) ?? Date.now(),
     userFields,
+    associationOverridden: bool(raw.associationOverridden),
   };
 }
 
