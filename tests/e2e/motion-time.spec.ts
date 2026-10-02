@@ -115,7 +115,7 @@ test("active timer pauses, totals match chapter time, and survive closing the br
     await expect(reopened.getByTestId("total-reading-time")).toHaveText(total!);
     await expect(reopened.getByRole("timer")).toHaveText("00:00");
     await reopened.getByRole("button", { name: "Back to library", exact: true }).click();
-    await expect(reopened.locator(".srow")).toHaveCount(1);
+    await expect(reopened.locator(".tile")).toHaveCount(1);
     await reopened.getByRole("complementary").getByRole("button", { name: "Time tracking", exact: true }).click();
     await expect(reopened.getByTestId("total-reading-time")).toHaveText(total!);
   } finally { await ctx.close(); fx.server.close(); rmSync(dir, { recursive: true, force: true }); }
