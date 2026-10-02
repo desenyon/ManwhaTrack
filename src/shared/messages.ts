@@ -46,6 +46,7 @@ export interface ContinueMessage {
   type: "continue/open";
   seriesId: string;
   newTab: boolean;
+  newWindow?: boolean;
   tabId?: number;
   /** Open a specific chapter or source URL instead of the computed destination. */
   url?: string;
