@@ -50,7 +50,7 @@ export function ShortcutsSection({ settings, update }: SectionProps) {
               <td>{SHORTCUT_LABEL[k]}</td>
               <td><kbd>{displayShortcut(settings.shortcuts[k])}</kbd></td>
               <td style={{ textAlign: "right" }}>
-                <button className="btn sm" onClick={() => { setWarning(undefined); setCapturing(k); }}>{capturing === k ? "Press keys…" : "Change"}</button>
+                <button className="btn sm" aria-label={`Change ${SHORTCUT_LABEL[k]} shortcut`} onClick={() => { setWarning(undefined); setCapturing(k); }}>{capturing === k ? "Press keys…" : "Change"}</button>
               </td>
             </tr>
           ))}
