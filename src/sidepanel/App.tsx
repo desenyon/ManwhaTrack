@@ -358,6 +358,7 @@ export function App({ expanded = false }: { expanded?: boolean }) {
       <main className="scroll" ref={scrollRef} key={route.name === "series" ? route.id : route.name}>
         {route.name === "home" && (
           <HomeView
+            expanded={expanded}
             lib={lib}
             settings={settings}
             updateSettings={updateSettings}
