@@ -47,6 +47,11 @@ export function openDb(name = currentDbName): Promise<IDBDatabase> {
       req.onblocked = () => {
         // Older connection still open in another context; it will close on versionchange.
       };
+    }).catch(err => {
+      // `indexedDB.open` can also throw synchronously (e.g. storage access).
+      // Do not retain a rejected connection promise that makes Retry ineffective.
+      if (connections.get(name) === p) connections.delete(name);
+      throw err;
     });
     connections.set(name, p);
   }
@@ -66,8 +71,26 @@ export function req<T>(r: IDBRequest<T>): Promise<T> {
   });
 }
 
+export class WriteRevokedError extends Error {
+  constructor() { super("Tracking permission changed before the write committed"); this.name = "WriteRevokedError"; }
+}
+
+const guardedWrites = new Map<IDBTransaction, { allows: () => boolean; revoked: boolean }>();
+
+/** Called when tracking policy changes, including while IDB is awaiting commit. */
+export function revokeDisallowedWrites(): void {
+  for (const [raw, guard] of guardedWrites) {
+    if (guard.allows()) continue;
+    try { raw.abort(); guard.revoked = true; } catch { /* Already committed. */ }
+  }
+}
+
 export class Tx {
-  constructor(readonly raw: IDBTransaction) {}
+  constructor(readonly raw: IDBTransaction, private readonly shouldWrite?: () => boolean) {}
+
+  private checkWrite(): void {
+    if (this.shouldWrite && !this.shouldWrite()) throw new WriteRevokedError();
+  }
 
   store(name: StoreName): IDBObjectStore {
     return this.raw.objectStore(name);
@@ -98,14 +121,17 @@ export class Tx {
   }
 
   put<T>(store: StoreName, value: T): Promise<IDBValidKey> {
+    this.checkWrite();
     return req(this.store(store).put(value));
   }
 
   delete(store: StoreName, key: IDBValidKey | IDBKeyRange): Promise<undefined> {
+    this.checkWrite();
     return req(this.store(store).delete(key));
   }
 
   clear(store: StoreName): Promise<undefined> {
+    this.checkWrite();
     return req(this.store(store).clear());
   }
 }
@@ -114,17 +140,20 @@ export class Tx {
  * Runs `fn` inside a single IDB transaction. Resolves after the transaction commits;
  * if `fn` throws, the transaction is aborted and nothing is written.
  */
-export async function withTx<T>(stores: StoreName[], mode: IDBTransactionMode, fn: (t: Tx) => Promise<T>): Promise<T> {
+export async function withTx<T>(stores: StoreName[], mode: IDBTransactionMode, fn: (t: Tx) => Promise<T>, shouldWrite?: () => boolean): Promise<T> {
   const db = await openDb();
   const raw = db.transaction(stores, mode, { durability: "strict" } as IDBTransactionOptions);
+  const guard = shouldWrite ? { allows: shouldWrite, revoked: false } : undefined;
+  if (guard) guardedWrites.set(raw, guard);
   const done = new Promise<void>((resolve, reject) => {
-    raw.oncomplete = () => resolve();
-    raw.onabort = () => reject(raw.error ?? new Error("Transaction aborted"));
-    raw.onerror = () => reject(raw.error ?? new Error("Transaction failed"));
+    raw.oncomplete = () => { guardedWrites.delete(raw); resolve(); };
+    raw.onabort = () => { guardedWrites.delete(raw); reject(guard?.revoked ? new WriteRevokedError() : raw.error ?? new Error("Transaction aborted")); };
+    raw.onerror = () => { guardedWrites.delete(raw); reject(raw.error ?? new Error("Transaction failed")); };
   });
   let result: T;
   try {
-    result = await fn(new Tx(raw));
+    result = await fn(new Tx(raw, shouldWrite));
+    if (shouldWrite && !shouldWrite()) throw new WriteRevokedError();
   } catch (err) {
     try {
       raw.abort();
@@ -132,11 +161,11 @@ export async function withTx<T>(stores: StoreName[], mode: IDBTransactionMode, f
       // Already finished.
     }
     await done.catch(() => undefined);
-    throw err;
+    throw guard?.revoked ? new WriteRevokedError() : err;
   }
   await done;
   return result;
 }
 
 export const read = <T>(stores: StoreName[], fn: (t: Tx) => Promise<T>) => withTx(stores, "readonly", fn);
-export const write = <T>(stores: StoreName[], fn: (t: Tx) => Promise<T>) => withTx(stores, "readwrite", fn);
+export const write = <T>(stores: StoreName[], fn: (t: Tx) => Promise<T>, shouldWrite?: () => boolean) => withTx(stores, "readwrite", fn, shouldWrite);
