@@ -43,7 +43,8 @@ export function CommandPalette({
             run: () => onContinue(s),
           }))
       : [];
-    return [...series, ...cmds].slice(0, 14);
+    const found = new Set(series.map(c => c.id.slice(2)));
+    return [...series, ...cmds.filter(c => !c.id.startsWith("c:") || !found.has(c.id.slice(2)))].slice(0, 14);
   }, [q, commands, entries, byId, onContinue]);
 
   const run = (c: Command | undefined) => {
