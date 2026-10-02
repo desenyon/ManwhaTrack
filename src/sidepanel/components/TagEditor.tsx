@@ -17,8 +17,7 @@ export function TagEditor({ tags, suggestions, onChange }: { tags: string[]; sug
         </span>
       ))}
       <input
-        className="input"
-        style={{ height: 24, width: 110, fontSize: 12 }}
+        className="input tag-input"
         placeholder="Add tag"
         aria-label="Add tag"
         list={listId}
