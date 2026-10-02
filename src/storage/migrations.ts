@@ -3,7 +3,7 @@
 // optional fields. A missing or failing step aborts the upgrade, which leaves the
 // existing database untouched — never clear data to "recover".
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 4;
 
 export type MigrationStep = (db: IDBDatabase, tx: IDBTransaction) => void;
 
@@ -36,7 +36,20 @@ function createInitialSchema(db: IDBDatabase): void {
 
 export const MIGRATIONS: Record<number, MigrationStep> = {
   1: (db) => createInitialSchema(db),
-  // 2: (db, tx) => { ...add index...; migrateRecords(tx, "series", (s) => ({ ...s, newField: default })); },
+  3: (_db, tx) => {
+    if (_db.version < 4) migrateRecords<Record<string, unknown>>(tx, "chapters", c => ({ ...c, progressRevision: c.progressRevision ?? 0, associationOverridden: c.associationOverridden === true }));
+  },
+  4: (_db, tx) => {
+    // One cursor combines prior transforms during a direct 1 → 4 upgrade.
+    // Existing chapters have no guessed viewport: maxProgress is not a position.
+    migrateRecords<Record<string, unknown>>(tx, "chapters", c => ({ ...c, progressRevision: c.progressRevision ?? 0, associationOverridden: c.associationOverridden === true }));
+  },
+  2: (db, tx) => {
+    // Version 3 combines chapter transforms in one cursor. Concurrent upgrade
+    // cursors otherwise overwrite each other's snapshots during a 1 → 3 upgrade.
+    if (db.version < 3) migrateRecords<Record<string, unknown>>(tx, "chapters", (c) => ({ ...c, progressRevision: c.progressRevision ?? 0 }));
+    migrateRecords<Record<string, unknown>>(tx, "sources", (s) => ({ ...s, removedAt: s.removedAt ?? undefined }));
+  },
 };
 
 export function upgradeDatabase(
