@@ -14,13 +14,17 @@ import { removeCustomCover, setCustomCover } from "../../storage/repositories/co
 import { publish, subscribe } from "../../shared/bus";
 import { sendToWorker } from "../../shared/messages";
 import { isSafeHttpUrl } from "../../detection/normalization/url";
+import { moveChapter } from "../../storage/manual";
+import { getCoverStatus, type CoverStatus } from "../../storage/cover-status";
 import { Cover } from "../../ui/Cover";
 import { Icon } from "../../ui/icons";
 import { Dialog, Menu, menuAtElement, type MenuState } from "../../ui/Menu";
 import { useToast } from "../../ui/toasts";
 import { updatesSupported } from "../../detection";
+import { CollectionMembership } from "../components/Collections";
 import { TagEditor } from "../components/TagEditor";
-import { continueText } from "../components/SeriesItem";
+import { continueText, SourceBadge } from "../components/SeriesItem";
+import { HandsScene } from "../components/Artwork";
 import { EventList } from "./HistoryView";
 import type { Actions } from "../useActions";
 import type { useLibrary } from "../../ui/hooks";
@@ -32,11 +36,16 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
   const s = lib.byId.get(id);
   const sources = useMemo(() => lib.sourcesBySeries.get(id) ?? [], [lib.sourcesBySeries, id]);
   const toast = useToast();
+  const [coverStatus, setCoverStatus] = useState<CoverStatus>();
+  const [chapterError, setChapterError] = useState(false);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<null | "title" | "aliases" | "cover" | "merge" | "progress" | { chapter: Chapter }>(null);
 
-  const loadChapters = useCallback(async () => setChapters(await listChapters(id)), [id]);
+  const loadChapters = useCallback(async () => {
+    try { setChapters(await listChapters(id)); setChapterError(false); setCoverStatus(await getCoverStatus(id)); }
+    catch { setChapterError(true); }
+  }, [id]);
   useEffect(() => {
     void loadChapters();
     return subscribe((m) => m.type === "library-changed" && (!m.seriesIds || m.seriesIds.includes(id)) && void loadChapters());
@@ -93,44 +102,27 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
 
   return (
     <>
+      <div className="series-detail">
       <Header title={s.title} onBack={onBack} onMore={moreMenu} />
+      {coverStatus?.state === "failed" && <div className="banner" role="status"><span>Cover could not be downloaded.</span><button className="btn sm" onClick={async () => {
+        const r = await sendToWorker<{ ok: boolean; error?: string }>({ type: "cover/refresh", seriesId: id });
+        toast.show(r?.ok ? "Cover updated" : r?.error ?? "Cover could not be downloaded.", { error: !r?.ok });
+        void loadChapters();
+      }}>Retry cover</button></div>}
+      {coverStatus?.state === "pending" && <p className="section small muted" role="status">Caching cover locally…</p>}
+      <div className="detail-layout">
       <div className="detail-head">
         <button className="icon-btn" style={{ width: "auto", height: "auto" }} aria-label="Change cover" onClick={(e) => coverMenu(e.currentTarget)}>
           <Cover coverId={s.coverId} title={s.title} size="lg" />
         </button>
-        <div style={{ minWidth: 0 }} className="stack">
-          <div>
-            <h1>{s.title}</h1>
-            <div className="row small" style={{ flexWrap: "wrap", gap: 4 }}>
-              <button className="btn sm ghost" onClick={() => setDialog("title")}>Edit title</button>
-              {s.userFields.includes("title") && s.detectedTitle && s.detectedTitle !== s.title && (
-                <button className="btn sm ghost" title={`Detected: ${s.detectedTitle}`} onClick={async () => { await resetUserField(s.id, "title"); changed(); }}>Use detected title</button>
-              )}
-            </div>
-            {s.alternateTitles.length > 0 && <div className="small muted" style={{ marginTop: 2 }}>Also: {s.alternateTitles.slice(0, 4).join(" · ")}{s.alternateTitles.length > 4 ? ` +${s.alternateTitles.length - 4}` : ""}</div>}
-            <button className="btn sm ghost" style={{ paddingLeft: 0 }} onClick={() => setDialog("aliases")}>Edit aliases</button>
-          </div>
-          <div className="row" style={{ flexWrap: "wrap" }}>
-            <label className="sr-only" htmlFor="status">Status</label>
-            <select id="status" className="select" value={s.status} onChange={(e) => void actions.setStatus(s, e.target.value as Series["status"])}>
-              {SERIES_STATUSES.map((st) => <option key={st} value={st}>{STATUS_LABEL[st]}</option>)}
-            </select>
-            <label className="sr-only" htmlFor="rating">Rating</label>
-            <select id="rating" className="select" value={s.personalRating ?? ""} onChange={(e) => void save({ personalRating: e.target.value === "" ? null : Number(e.target.value) }, { personalRating: e.target.value === "" ? undefined : Number(e.target.value) })}>
-              <option value="">No rating</option>
-              {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((n) => <option key={n} value={n}>{n} / 10</option>)}
-            </select>
-            <button className="icon-btn fav-toggle" aria-pressed={s.favorite} aria-label={s.favorite ? "Remove from favorites" : "Add to favorites"} onClick={() => void actions.toggleFavorite(s)}>
-              <Icon name={s.favorite ? "starFill" : "star"} />
-            </button>
-          </div>
-        </div>
+        <h1 style={{ minWidth: 0 }}>{s.title}</h1>
       </div>
+      <HandsScene className="detail-art" />
 
-      <div className="section" style={{ paddingTop: 0 }}>
-        <div className="row">
+      <div className="detail-actions">
+        <div className="row reading-actions">
           {sm.continueKind !== "none" && (
-            <button className="btn primary" style={{ flex: 1 }} onClick={(e) => void actions.continueSeries(s, { newTab: e.metaKey || e.ctrlKey ? true : undefined })}>
+            <button className="btn primary" style={{ flex: 1 }} onClick={(e) => void actions.continueSeries(s, { newTab: e.metaKey || e.ctrlKey ? true : undefined })} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); void actions.continueSeries(s, { newTab: true }); } }}>
               {continueText(s)}{sm.continueLabel ? ` · ${sm.continueLabel}` : ""}
             </button>
           )}
@@ -138,48 +130,70 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
         </div>
       </div>
 
-      <div className="section">
-        <dl className="kv">
-          <dt>Progress</dt>
-          <dd className="tabular">
+      <section className="detail-progress" aria-label="Reading position">
+        <dl className="progress-facts">
+          <div><dt>Last completed</dt><dd className="tabular">
             {sm.lastCompletedLabel ? `${sm.lastCompletedLabel} read` : "Nothing read yet"}
             {sm.caughtUp ? " · Caught up" : sm.newCount > 0 ? ` · ${sm.newCount} new` : ""}
-          </dd>
-          <dt>Current</dt>
-          <dd>{sm.currentLabel ? `${sm.currentLabel}${sm.currentCompleted ? " (read)" : sm.currentProgress ? ` (${Math.round(sm.currentProgress * 100)}%)` : ""}` : "—"}</dd>
-          <dt>Last read</dt>
-          <dd>{s.lastReadAt ? relativeTime(s.lastReadAt) : "Not started"}</dd>
-          <dt>Latest known</dt>
-          <dd>{sm.latestKnownLabel ?? "Unknown"}{sources.some((x) => x.storyEnded) ? " · story ended" : ""}</dd>
-          <dt>Reading time</dt>
-          <dd>{readTime > 0 ? `${formatDuration(readTime)} (measured while active)` : "Not measured yet"}</dd>
-          <dt>Tracked since</dt>
-          <dd>{shortDate(s.discoveredAt)}</dd>
-          <dt>Tags</dt>
-          <dd><TagEditor tags={s.tags} suggestions={allTags} onChange={(tags) => void save({ tags }, { tags })} /></dd>
+          </dd></div>
+          <div><dt>Current chapter</dt><dd>{sm.currentLabel ? `${sm.currentLabel}${sm.currentCompleted ? " (read)" : sm.currentProgress ? ` · ${Math.round(sm.currentProgress * 100)}% read` : ""}` : "Not opened yet"}</dd></div>
+          <div><dt>Latest known</dt><dd>{sm.latestKnownLabel ?? "Unknown"}{sources.some((x) => x.storyEnded) ? " · story ended" : ""}</dd></div>
+          <div><dt>Last read</dt><dd>{s.lastReadAt ? relativeTime(s.lastReadAt) : "Not started"}</dd></div>
         </dl>
-      </div>
+      </section>
 
-      <details className="panel" open>
+      <section className="detail-metadata library-metadata stack">
+        <h2 className="section-title">Library details</h2>
+        <div className="row small" style={{ flexWrap: "wrap", gap: 4 }}>
+          <button className="btn sm ghost" onClick={() => setDialog("title")}>Edit title</button>
+          {s.userFields.includes("title") && s.detectedTitle && s.detectedTitle !== s.title && (
+            <button className="btn sm ghost" title={`Detected: ${s.detectedTitle}`} onClick={async () => { await resetUserField(s.id, "title"); changed(); }}>Use detected title</button>
+          )}
+        </div>
+        {s.alternateTitles.length > 0 && <div className="small muted" style={{ marginTop: 2 }}>Also: {s.alternateTitles.slice(0, 4).join(" · ")}{s.alternateTitles.length > 4 ? ` +${s.alternateTitles.length - 4}` : ""}</div>}
+        <button className="btn sm ghost" style={{ paddingLeft: 0 }} onClick={() => setDialog("aliases")}>Edit aliases</button>
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <label className="sr-only" htmlFor="status">Status</label>
+          <select id="status" className="select" value={s.status} onChange={(e) => void actions.setStatus(s, e.target.value as Series["status"])}>
+            {SERIES_STATUSES.map((st) => <option key={st} value={st}>{STATUS_LABEL[st]}</option>)}
+          </select>
+          <label className="sr-only" htmlFor="rating">Rating</label>
+          <select id="rating" className="select" value={s.personalRating ?? ""} onChange={(e) => void save({ personalRating: e.target.value === "" ? null : Number(e.target.value) }, { personalRating: e.target.value === "" ? undefined : Number(e.target.value) })}>
+            <option value="">No rating</option>
+            {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((n) => <option key={n} value={n}>{n} / 10</option>)}
+          </select>
+          <button className="icon-btn fav-toggle" aria-pressed={s.favorite} aria-label={s.favorite ? "Remove from favorites" : "Add to favorites"} onClick={() => void actions.toggleFavorite(s)}>
+            <Icon name={s.favorite ? "starFill" : "star"} />
+          </button>
+        </div>
+        <div className="detail-field"><h3>Lists</h3><CollectionMembership seriesId={s.id} /></div>
+        <div className="detail-field"><h3>Tags</h3><TagEditor tags={s.tags} suggestions={allTags} onChange={(tags) => void save({ tags }, { tags })} /></div>
+        <dl className="kv detail-secondary"><dt>Reading time</dt><dd>{readTime > 0 ? `${formatDuration(readTime)} (active)` : "Not measured yet"}</dd><dt>Tracked since</dt><dd>{shortDate(s.discoveredAt)}</dd></dl>
+      </section>
+
+      <details className="panel detail-sources" open>
         <summary>Sources <span className="faint">{sources.length}</span></summary>
         {sources.map((src) => (
           <SourceRow key={src.id} src={src} series={s} canRemove={sources.length > 1} onChanged={changed} onOpenSeries={onOpenSeries} actions={actions} />
         ))}
       </details>
 
-      <details className="panel" open>
+      <details className="panel detail-chapters" open>
         <summary>Chapters <span className="faint">{chapters.length}</span></summary>
+        {chapterError && <p role="alert">Chapter history could not be opened. <button className="btn sm" onClick={() => void loadChapters()}>Retry</button></p>}
         <ChapterTimeline series={s} chapters={chapters} actions={actions} onEdit={(c) => setDialog({ chapter: c })} onChanged={() => { changed(); void loadChapters(); }} />
       </details>
 
-      <details className="panel">
+      <details className="panel detail-history">
         <summary>Reading history</summary>
         <EventList seriesId={s.id} />
       </details>
 
-      <div className="panel">
+      <div className="panel detail-notes">
         <h3 style={{ marginBottom: 6 }}><label htmlFor="notes">Notes</label></h3>
         <NotesField key={s.id} value={s.notes ?? ""} onSave={(notes) => void save({ notes }, { notes: notes || undefined })} />
+      </div>
+      </div>
       </div>
 
       {menu && <Menu state={menu} onClose={() => setMenu(null)} />}
@@ -193,8 +207,8 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
       {dialog === "progress" && (
         <TextDialog
           title="Set reading progress"
-          initial={sm.lastCompletedOrdinal !== undefined ? String(sm.lastCompletedOrdinal) : ""}
-          hint="Chapters up to this number are marked read. Use this if you read elsewhere before ManwhaTrack."
+          initial={sm.lastCompletedLabel ?? ""}
+          hint="Enter a number or full label, e.g. Season 2 Chapter 8. Chapters up to this position are marked read."
           onClose={() => setDialog(null)}
           onSave={async (v) => {
             try {
@@ -225,7 +239,7 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
       )}
       {dialog === "merge" && <MergeDialog series={s} lib={lib} onClose={() => setDialog(null)} onMerged={() => toast.show("Series merged")} />}
       {dialog && typeof dialog === "object" && "chapter" in dialog && (
-        <ChapterEditDialog chapter={dialog.chapter} onClose={() => setDialog(null)} onSaved={() => { changed(); void loadChapters(); }} />
+        <ChapterEditDialog chapter={dialog.chapter} destinations={lib.series.filter((other) => other.id !== s.id && !other.removedAt)} onMoved={onOpenSeries} onClose={() => setDialog(null)} onSaved={() => { changed(); void loadChapters(); }} />
       )}
     </>
   );
@@ -289,10 +303,11 @@ function SourceRow({ src, series, canRemove, onChanged, onOpenSeries, actions }:
     <div className="source">
       <div style={{ minWidth: 0 }}>
         <div className="row" style={{ gap: 6 }}>
-          <strong className="truncate">{src.hostname}</strong>
+          <SourceBadge host={src.hostname} />
           {preferred && <span className="badge neutral">Preferred</span>}
           {src.disabled && <span className="badge neutral">Updates off</span>}
         </div>
+        <div className="small faint source-hostname">{src.hostname}</div>
         <div className="small">
           {updatesSupported(src) ? <span className={`health ${health}`}>{HEALTH_TEXT[health]}</span> : <span className="health unknown">Update checks aren't available for this site</span>}
           {src.lastCheckedAt && <span className="faint"> · checked {relativeTime(src.lastCheckedAt)}</span>}
@@ -308,7 +323,7 @@ function SourceRow({ src, series, canRemove, onChanged, onOpenSeries, actions }:
           { label: src.disabled ? "Enable update checks" : "Disable update checks", onSelect: async () => { await updateSource(src.id, { disabled: !src.disabled }); onChanged(); } },
           { kind: "separator" },
           { label: "Split into separate series", disabled: !canRemove, onSelect: async () => { try { const id = await splitSource(src.id); onChanged(); if (id) { toast.show("Split into a new series"); onOpenSeries(id); } } catch (e) { toast.show(e instanceof Error ? e.message : "Could not split.", { error: true }); } } },
-          { label: "Remove source (keep progress)", danger: true, disabled: !canRemove, onSelect: async () => { try { await removeSource(src.id); onChanged(); toast.show(`Removed ${src.hostname}`); } catch (e) { toast.show(e instanceof Error ? e.message : "Could not remove.", { error: true }); } } },
+          { label: "Remove source (keep progress)", danger: true, disabled: !canRemove, onSelect: async () => { if (!confirm(`Remove ${src.hostname}? Chapter progress will be kept.`)) return; try { await removeSource(src.id); onChanged(); toast.show(`Removed ${src.hostname}`); } catch (e) { toast.show(e instanceof Error ? e.message : "Could not remove.", { error: true }); } } },
         ]))}>
           <Icon name="more" />
         </button>
@@ -334,7 +349,7 @@ function ChapterTimeline({ series, chapters, actions, onEdit, onChanged }: { ser
   return (
     <>
       {selected.size > 0 && (
-        <div className="row" style={{ marginBottom: 6 }}>
+        <div className="row chapter-selection" style={{ marginBottom: 6 }}>
           <span className="small">{selected.size} selected</span>
           <button className="btn sm" onClick={() => void bulk(true)}>Mark read</button>
           <button className="btn sm" onClick={() => void bulk(false)}>Mark unread</button>
@@ -354,10 +369,9 @@ function ChapterTimeline({ series, chapters, actions, onEdit, onChanged }: { ser
                 setSelected(next);
               }} />
               <span className={`state ${state}`} aria-label={c.completedAt ? "Read" : state ? "Started" : "Unread"}>{c.completedAt ? "✓" : state ? "◐" : "·"}</span>
-              <button className="btn ghost sm truncate" style={{ justifyContent: "flex-start", padding: "0 4px" }} onClick={() => void actions.continueSeries(series, { url: c.url })} title={c.url}>
-                {c.chapterLabel}
-                {c.title && c.title !== c.chapterLabel && !c.title.includes(series.title) && <span className="faint"> · {c.title}</span>}
-                {series.currentChapterId === c.id && <span className="faint"> · current</span>}
+              <button className="chapter-link" onClick={() => void actions.continueSeries(series, { url: c.url })} title={c.url}>
+                <span>{c.chapterLabel}</span>
+                <span className="chapter-context">{series.currentChapterId === c.id ? "Current · " : ""}{c.completedAt ? "Read" : c.lastOpenedAt ? `${Math.round(c.maxProgress * 100)}% read` : c.inferred ? "Unconfirmed link" : "Not opened"}</span>
               </button>
               <span className="faint tabular">{date ? shortDate(date) : ""}</span>
               <button className="icon-btn" style={{ width: 22, height: 22 }} aria-label={`Actions for ${c.chapterLabel}`} onClick={(e) => setMenu(menuAtElement(e.currentTarget, [
@@ -366,7 +380,7 @@ function ChapterTimeline({ series, chapters, actions, onEdit, onChanged }: { ser
                 { label: "Mark all up to here read", disabled: c.ordinal === undefined, onSelect: async () => { await markReadUpTo(series.id, c.id); onChanged(); } },
                 { label: "Edit label / number…", onSelect: () => onEdit(c) },
                 { kind: "separator" },
-                { label: "Delete chapter record", danger: true, disabled: !!c.lastOpenedAt, onSelect: async () => { await deleteChapter(c.id); onChanged(); } },
+                { label: "Delete chapter record", danger: true, disabled: !!c.lastOpenedAt, onSelect: async () => { if (!confirm(`Delete ${c.chapterLabel}?`)) return; await deleteChapter(c.id); onChanged(); } },
               ]))}>
                 <Icon name="more" />
               </button>
@@ -380,11 +394,14 @@ function ChapterTimeline({ series, chapters, actions, onEdit, onChanged }: { ser
   );
 }
 
-function ChapterEditDialog({ chapter, onClose, onSaved }: { chapter: Chapter; onClose: () => void; onSaved: () => void }) {
+function ChapterEditDialog({ chapter, onClose, onSaved, destinations, onMoved }: { chapter: Chapter; onClose: () => void; onSaved: () => void; destinations: Series[]; onMoved: (id: string) => void }) {
+  const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
   const [label, setLabel] = useState(chapter.chapterLabel);
   const [num, setNum] = useState(chapter.ordinal !== undefined ? String(chapter.chapterNumber ?? chapter.ordinal) : "");
   return (
-    <Dialog title="Edit chapter" onClose={onClose}>
+    <Dialog title="Edit chapter" onClose={() => { if (!busy) onClose(); }}>
       <div className="stack">
         <label className="stack" style={{ gap: 4 }}>
           <span className="small muted">Label</span>
@@ -395,20 +412,35 @@ function ChapterEditDialog({ chapter, onClose, onSaved }: { chapter: Chapter; on
           <input className="input" inputMode="decimal" value={num} onChange={(e) => setNum(e.target.value)} />
         </label>
       </div>
+      {destinations.length > 0 && <div className="stack" style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+        <label className="stack"><span>Move to another series</span><select className="select" value={target} disabled={busy} onChange={(e) => { setTarget(e.target.value); setError(undefined); }}><option value="">Choose an existing series</option>{destinations.map((series) => <option key={series.id} value={series.id}>{series.title}</option>)}</select></label>
+        {target && <><p className="small muted" style={{ margin: 0 }}>Move {chapter.chapterLabel} to “{destinations.find((series) => series.id === target)?.title}”? Its progress and reading history are preserved. This corrects its series association for future detection. Unsaved label changes are not included.</p><button className="btn" disabled={busy} onClick={async () => {
+          setBusy(true); setError(undefined);
+          try {
+            await moveChapter(chapter.id, target);
+            publish({ type: "library-changed", seriesIds: [chapter.seriesId, target] });
+            onSaved(); onClose(); onMoved(target);
+          } catch (err) { setError(err instanceof Error ? err.message : "Could not move this chapter."); }
+          finally { setBusy(false); }
+        }}>{busy ? "Moving…" : "Move chapter"}</button></>}
+      </div>}
+      {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
       <div className="actions">
-        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn" disabled={busy} onClick={onClose}>Cancel</button>
         <button
           className="btn primary"
+          disabled={busy || !label.trim() || (num.trim() !== "" && !Number.isFinite(Number(num)))}
           onClick={async () => {
             const original = String(chapter.chapterNumber ?? chapter.ordinal ?? "");
             const n = num.trim() === "" ? null : Number(num.trim());
             const numberChanged = num.trim() !== original && (n === null || Number.isFinite(n));
-            await editChapter(chapter.id, {
+            setBusy(true); setError(undefined);
+            try { await editChapter(chapter.id, {
               label: label !== chapter.chapterLabel ? label : undefined,
               number: numberChanged ? n : undefined,
             });
             onSaved();
-            onClose();
+            onClose(); } catch (err) { setError(err instanceof Error ? err.message : "Could not save this chapter."); } finally { setBusy(false); }
           }}
         >
           Save
