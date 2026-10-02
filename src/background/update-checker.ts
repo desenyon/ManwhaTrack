@@ -22,9 +22,10 @@ const HOUR = 3_600_000;
 const MAX_PER_RUN = 8;
 const SPACING_MS = 1500;
 const LOCK_KEY = "updates:lock";
+let running = false;
 
 export function isDue(src: SeriesSource, intervalHours: number, now: number): boolean {
-  if (src.disabled) return false;
+  if (src.disabled || src.removedAt) return false;
   const backoff = Math.pow(2, Math.min(src.consecutiveFailures ?? 0, 5));
   return !src.lastCheckedAt || now - src.lastCheckedAt >= intervalHours * HOUR * backoff;
 }
@@ -43,7 +44,7 @@ export function planChecks(
     if (!s || s.removedAt || s.hidden || s.status === "dropped") return false;
     if (s.status === "completed" && src.storyEnded) return false;
     if (opts.seriesIds && !opts.seriesIds.includes(s.id)) return false;
-    if (!isSafeHttpUrl(src.seriesUrl) || src.disabled) return false;
+    if (!isSafeHttpUrl(src.seriesUrl) || src.disabled || src.removedAt) return false;
     if (!updatesSupported(src)) return false;
     return opts.force || isDue(src, intervalHours, now);
   });
@@ -142,14 +143,19 @@ async function checkSource(src: SeriesSource, siteRules: SiteRule[]): Promise<vo
 }
 
 export async function runUpdateChecks(opts: { force?: boolean; seriesIds?: string[] } = {}): Promise<number> {
-  const settings = await getSettings();
-  if (!settings.updateChecks && !opts.force) return 0;
-  if (!(await acquireLock())) return 0;
+  if (running) return 0;
+  running = true;
+  let acquired = false;
   try {
+    const settings = await getSettings();
+    if (!settings.updateChecks && !opts.force) return 0;
+    if (!(await acquireLock())) return 0;
+    acquired = true;
     const [series, sources] = await Promise.all([listSeries(), listSources()]);
     const plan = planChecks(series, sources, settings.updateIntervalHours, Date.now(), opts);
     for (let i = 0; i < plan.length; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, SPACING_MS));
+      await chrome.storage.session.set({ [LOCK_KEY]: Date.now() });
       const src = plan[i]!;
       await checkSource(src, settings.siteRules);
       publish({ type: "library-changed", seriesIds: [src.seriesId] });
@@ -157,8 +163,12 @@ export async function runUpdateChecks(opts: { force?: boolean; seriesIds?: strin
     await chrome.storage.local.set({ "updates:lastRunAt": Date.now() });
     return plan.length;
   } finally {
-    await chrome.storage.session.remove(LOCK_KEY);
-    await closeOffscreen();
-    await refreshBadge();
+    try {
+      if (acquired) {
+        await chrome.storage.session.remove(LOCK_KEY);
+        await closeOffscreen();
+        await refreshBadge();
+      }
+    } finally { running = false; }
   }
 }
