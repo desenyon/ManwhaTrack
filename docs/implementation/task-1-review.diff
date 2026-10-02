@@ -1,0 +1,792 @@
+diff --git a/src/options/views/Data.tsx b/src/options/views/Data.tsx
+index a7e8286..12a2d2d 100644
+--- a/src/options/views/Data.tsx
++++ b/src/options/views/Data.tsx
+@@ -58,7 +58,7 @@ export function DataSection() {
+     try {
+       const r = await applyImport(parsed.file, mode, { importSettings });
+       publish({ type: "library-changed" });
+-      toast.show(`Imported: ${r.added} added, ${r.merged} updated, ${r.skipped} kept as they were`);
++      toast.show(r.settingsWarning ?? `Imported: ${r.added} added, ${r.merged} updated, ${r.skipped} kept as they were`);
+       setParsed(null);
+     } catch (e) {
+       // The import runs in one transaction; a failure leaves the library unchanged.
+diff --git a/src/shared/types/models.ts b/src/shared/types/models.ts
+index 304fcb6..d884870 100644
+--- a/src/shared/types/models.ts
++++ b/src/shared/types/models.ts
+@@ -111,6 +111,8 @@ export interface SeriesSource {
+   lastError?: string;
+ 
+   adapterId?: string;
++  /** Removed from active reading, retained for historical identity. */
++  removedAt?: number;
+   /** Disables update checks for this source only. */
+   disabled: boolean;
+ 
+@@ -145,6 +147,8 @@ export interface Chapter {
+   completedAt?: number;
+   completionSource?: CompletionSource;
+ 
++  /** Invalidates automatic observations after manual progress changes. Legacy value is 0. */
++  progressRevision?: number;
+   visitCount: number;
+   maxProgress: number;
+   readingTimeMs: number;
+diff --git a/src/storage/backup.ts b/src/storage/backup.ts
+index cdf1d2a..ca2ac89 100644
+--- a/src/storage/backup.ts
++++ b/src/storage/backup.ts
+@@ -12,9 +12,9 @@ import { mergeChapterInto, mergeSeriesFields } from "./repositories/sources";
+ import { getSettings, repairSettings, saveSettings } from "./repositories/settings";
+ import { getQueue } from "./repositories/queue";
+ import { normalizeTitle } from "../detection/normalization/title";
+-import { isSafeHttpUrl } from "../detection/normalization/url";
++import { canonicalizeUrl, isSafeHttpUrl } from "../detection/normalization/url";
+ 
+-export const EXPORT_VERSION = 1;
++export const EXPORT_VERSION = 2;
+ const APP = "ManwhaTrack";
+ 
+ type PortableSeries = Omit<Series, "summary" | "titleKeys" | "normalizedTitle">;
+@@ -55,8 +55,9 @@ export async function exportLibrary(opts: { includeCovers?: boolean; seriesIds?:
+     covers: opts.includeCovers ? await t.getAll<CoverAsset>("covers") : [],
+   }));
+   const only = opts.seriesIds ? new Set(opts.seriesIds) : null;
+-  const keep = <T extends { seriesId: string }>(x: T) => !only || only.has(x.seriesId);
+   const series = data.series.filter((s) => !s.removedAt && (!only || only.has(s.id)));
++  const exportedIds = new Set(series.map((s) => s.id));
++  const keep = <T extends { seriesId: string }>(x: T) => exportedIds.has(x.seriesId);
+   const coverIds = new Set(series.flatMap((s) => [s.coverId, s.detectedCoverId]).filter(Boolean) as string[]);
+ 
+   const covers: PortableCover[] = [];
+@@ -88,7 +89,7 @@ export async function exportLibrary(opts: { includeCovers?: boolean; seriesIds?:
+     chapters: data.chapters.filter(keep),
+     history: data.events.filter(keep),
+     settings: only ? {} : settings,
+-    queue: queue.filter((id) => !only || only.has(id)),
++    queue: queue.filter((id) => exportedIds.has(id)),
+     ...(opts.includeCovers ? { covers } : {}),
+   };
+ }
+@@ -126,7 +127,7 @@ function csvCell(v: string): string {
+ 
+ /** Upgrades older export formats step by step. */
+ export const EXPORT_MIGRATIONS: Record<number, (f: Record<string, unknown>) => Record<string, unknown>> = {
+-  // 1: (f) => ({ ...f, exportVersion: 2, ... }),
++  1: (f) => ({ ...f, exportVersion: 2, schemaVersion: 2 }),
+ };
+ 
+ export type ParseResult = { ok: true; file: BackupFile; invalid: number } | { ok: false; error: string };
+@@ -264,6 +265,7 @@ export interface ImportResult {
+   added: number;
+   merged: number;
+   skipped: number;
++  settingsWarning?: string;
+ }
+ 
+ export async function applyImport(file: BackupFile, mode: ConflictMode, opts: { importSettings?: boolean } = {}): Promise<ImportResult> {
+@@ -339,12 +341,13 @@ export async function applyImport(file: BackupFile, mode: ConflictMode, opts: {
+           await t.put("sources", targetSource);
+         }
+         for (const ch of chaptersBySource.get(src.id) ?? []) {
+-          const same = await t.firstByIndex<Chapter>("chapters", "sourceKey", [targetSource.id, ch.key]);
++          const same = (await t.byIndex<Chapter>("chapters", "canonicalUrl", canonicalizeUrl(ch.url))).find((c) => c.sourceId === targetSource.id)
++            ?? await t.firstByIndex<Chapter>("chapters", "sourceKey", [targetSource.id, ch.key]);
+           if (same) {
+             if (mode === "replace") {
+               Object.assign(same, { completedAt: ch.completedAt, completionSource: ch.completionSource, maxProgress: ch.maxProgress, visitCount: Math.max(same.visitCount, ch.visitCount) });
+             } else {
+-              mergeChapterInto(same, ch);
++              mergeChapterInto(same, ch, true);
+             }
+             await t.put("chapters", same);
+             chapterIdMap.set(ch.id, same.id);
+@@ -378,7 +381,11 @@ export async function applyImport(file: BackupFile, mode: ConflictMode, opts: {
+   });
+ 
+   if (opts.importSettings && file.settings && Object.keys(file.settings).length) {
+-    await saveSettings(repairSettings({ ...(await getSettings()), ...file.settings }));
++    try {
++      await saveSettings(repairSettings({ ...(await getSettings()), ...file.settings }));
++    } catch {
++      result.settingsWarning = "Library imported, but settings could not be saved. Your existing settings were kept.";
++    }
+   }
+   return result;
+ }
+diff --git a/src/storage/migrations.ts b/src/storage/migrations.ts
+index 5a61dd7..7fbfe7c 100644
+--- a/src/storage/migrations.ts
++++ b/src/storage/migrations.ts
+@@ -3,7 +3,7 @@
+ // optional fields. A missing or failing step aborts the upgrade, which leaves the
+ // existing database untouched — never clear data to "recover".
+ 
+-export const SCHEMA_VERSION = 1;
++export const SCHEMA_VERSION = 2;
+ 
+ export type MigrationStep = (db: IDBDatabase, tx: IDBTransaction) => void;
+ 
+@@ -36,7 +36,10 @@ function createInitialSchema(db: IDBDatabase): void {
+ 
+ export const MIGRATIONS: Record<number, MigrationStep> = {
+   1: (db) => createInitialSchema(db),
+-  // 2: (db, tx) => { ...add index...; migrateRecords(tx, "series", (s) => ({ ...s, newField: default })); },
++  2: (_db, tx) => {
++    migrateRecords<Record<string, unknown>>(tx, "chapters", (c) => ({ ...c, progressRevision: c.progressRevision ?? 0 }));
++    migrateRecords<Record<string, unknown>>(tx, "sources", (s) => ({ ...s, removedAt: s.removedAt ?? undefined }));
++  },
+ };
+ 
+ export function upgradeDatabase(
+diff --git a/src/storage/repositories/chapters.ts b/src/storage/repositories/chapters.ts
+index 7fbf5c5..de7c6a1 100644
+--- a/src/storage/repositories/chapters.ts
++++ b/src/storage/repositories/chapters.ts
+@@ -15,6 +15,16 @@ export async function addEventTx(t: Tx, e: Omit<ReadingEvent, "id">): Promise<vo
+   await t.put("events", { id: newId(), ...e });
+ }
+ 
++async function notifyProgressChanged(seriesId: string): Promise<void> {
++  try {
++    if (typeof chrome !== "undefined" && chrome.storage?.local) {
++      await chrome.storage.local.set({ "reading:revision": { seriesId, at: Date.now(), token: newId() } });
++    }
++  } catch {
++    // The revision stored with each chapter still rejects stale automatic writes.
++  }
++}
++
+ function sameOrdinal(a: Chapter, b: Chapter): boolean {
+   return a.ordinal !== undefined && b.ordinal !== undefined ? Math.abs(a.ordinal - b.ordinal) < 1e-6 : a.key === b.key;
+ }
+@@ -30,12 +40,13 @@ export async function markChapters(seriesId: string, chapterIds: string[], readS
+     const targets = all.filter((c) => chapterIds.includes(c.id));
+     for (const target of targets) {
+       for (const c of all.filter((x) => sameOrdinal(x, target))) {
+-        if (readState && !c.completedAt) {
++        c.progressRevision = (c.progressRevision ?? 0) + 1;
++        if (readState) {
+           c.completedAt = now;
+           c.completionSource = "manual";
+           c.maxProgress = Math.max(c.maxProgress, 1);
+           await t.put("chapters", c);
+-        } else if (!readState && c.completedAt) {
++        } else {
+           c.completedAt = undefined;
+           c.completionSource = undefined;
+           c.maxProgress = 0;
+@@ -53,18 +64,20 @@ export async function markChapters(seriesId: string, chapterIds: string[], readS
+     }
+     await refreshSeriesTx(t, seriesId);
+   });
++  await notifyProgressChanged(seriesId);
+ }
+ 
+ /** Marks every known chapter up to and including the given one as read. */
+ export async function markReadUpTo(seriesId: string, chapterId: string): Promise<number> {
+   const now = Date.now();
+-  return write(["series", "chapters", "sources", "events"], async (t) => {
++  const count = await write(["series", "chapters", "sources", "events"], async (t) => {
+     const all = await t.byIndex<Chapter>("chapters", "seriesId", seriesId);
+     const target = all.find((c) => c.id === chapterId);
+     if (!target || target.ordinal === undefined) return 0;
+     let n = 0;
+     for (const c of all) {
+       if (c.ordinal !== undefined && c.ordinal <= target.ordinal + 1e-6 && !c.completedAt) {
++        c.progressRevision = (c.progressRevision ?? 0) + 1;
+         c.completedAt = now;
+         c.completionSource = "manual";
+         c.maxProgress = 1;
+@@ -76,6 +89,8 @@ export async function markReadUpTo(seriesId: string, chapterId: string): Promise
+     await refreshSeriesTx(t, seriesId);
+     return n;
+   });
++  await notifyProgressChanged(seriesId);
++  return count;
+ }
+ 
+ /**
+@@ -88,7 +103,7 @@ export async function setProgressTo(seriesId: string, label: string): Promise<vo
+   const now = Date.now();
+   await write(["series", "chapters", "sources", "events"], async (t) => {
+     const series = await t.get<{ preferredSourceId?: string }>("series", seriesId);
+-    const sources = await t.byIndex<SeriesSource>("sources", "seriesId", seriesId);
++    const sources = (await t.byIndex<SeriesSource>("sources", "seriesId", seriesId)).filter((s) => !s.removedAt);
+     const source = sources.find((s) => s.id === series?.preferredSourceId) ?? sources[0];
+     if (!source) throw new Error("This series has no source");
+     const all = await t.byIndex<Chapter>("chapters", "seriesId", seriesId);
+@@ -102,14 +117,16 @@ export async function setProgressTo(seriesId: string, label: string): Promise<vo
+     for (const c of all) {
+       if (c.ordinal === undefined) continue;
+       const shouldRead = c.ordinal <= parsed.ordinal! + 1e-6;
+-      if (shouldRead && !c.completedAt) {
++      c.progressRevision = (c.progressRevision ?? 0) + 1;
++      if (shouldRead) {
+         c.completedAt = now;
+         c.completionSource = "manual";
+         c.maxProgress = 1;
+         await t.put("chapters", c);
+-      } else if (!shouldRead && c.completedAt && c.completionSource === "manual") {
++      } else {
+         c.completedAt = undefined;
+         c.completionSource = undefined;
++        c.maxProgress = 0;
+         await t.put("chapters", c);
+       }
+     }
+@@ -118,6 +135,7 @@ export async function setProgressTo(seriesId: string, label: string): Promise<vo
+       s.currentChapterId = target!.id;
+     });
+   });
++  await notifyProgressChanged(seriesId);
+ }
+ 
+ /** User correction of a chapter's label or number. Survives future detections. */
+@@ -133,7 +151,7 @@ export async function editChapter(chapterId: string, edit: { label?: string; num
+         c.ordinal = p.ordinal;
+         c.chapterNumber = p.number;
+       }
+-      c.key = p.key;
++      // Display corrections must not change the detected source identity.
+       if (!c.userFields.includes("label")) c.userFields.push("label");
+     }
+     if (edit.number !== undefined) {
+diff --git a/src/storage/repositories/sources.ts b/src/storage/repositories/sources.ts
+index 707855e..f3ebf5a 100644
+--- a/src/storage/repositories/sources.ts
++++ b/src/storage/repositories/sources.ts
+@@ -15,7 +15,7 @@ export function sourceHealth(s: SeriesSource, now = Date.now()): SourceHealth {
+ 
+ export async function listSources(seriesId?: string): Promise<SeriesSource[]> {
+   const raw = await read(["sources"], (t) => (seriesId ? t.byIndex<SeriesSource>("sources", "seriesId", seriesId) : t.getAll<SeriesSource>("sources")));
+-  return raw.map((s) => repairSource(s as SeriesSource & Record<string, unknown>)).filter((s): s is SeriesSource => !!s);
++  return raw.map((s) => repairSource(s as SeriesSource & Record<string, unknown>)).filter((s): s is SeriesSource => !!s && !s.removedAt);
+ }
+ 
+ export async function updateSource(id: string, patch: Partial<Pick<SeriesSource, "disabled" | "seriesUrl">>): Promise<void> {
+@@ -28,16 +28,17 @@ export async function updateSource(id: string, patch: Partial<Pick<SeriesSource,
+ }
+ 
+ /** Folds chapter `from` into `into` (same chapter, different record), keeping all progress. */
+-export function mergeChapterInto(into: Chapter, from: Chapter): void {
++export function mergeChapterInto(into: Chapter, from: Chapter, snapshot = false): void {
+   into.firstOpenedAt = minDefined(into.firstOpenedAt, from.firstOpenedAt);
+   into.lastOpenedAt = maxDefined(into.lastOpenedAt, from.lastOpenedAt);
+   if (from.completedAt && (!into.completedAt || from.completedAt < into.completedAt)) {
+     into.completedAt = from.completedAt;
+     into.completionSource = from.completionSource;
+   }
+-  into.visitCount += from.visitCount;
++  into.visitCount = snapshot ? Math.max(into.visitCount, from.visitCount) : into.visitCount + from.visitCount;
+   into.maxProgress = Math.max(into.maxProgress, from.maxProgress);
+-  into.readingTimeMs += from.readingTimeMs;
++  into.readingTimeMs = snapshot ? Math.max(into.readingTimeMs, from.readingTimeMs) : into.readingTimeMs + from.readingTimeMs;
++  into.progressRevision = Math.max(into.progressRevision ?? 0, from.progressRevision ?? 0);
+   into.discoveredAt = Math.min(into.discoveredAt, from.discoveredAt);
+   if (!into.lastOpenedAt && from.url) into.url = from.url;
+ }
+@@ -64,17 +65,20 @@ async function moveChaptersTx(t: Tx, fromSourceId: string, to: SeriesSource): Pr
+   }
+ }
+ 
+-/** Removes a source from a series. Its chapters and progress move to another source of the same series. */
++/** Removes an active source while retaining its chapters, URLs and history. */
+ export async function removeSource(sourceId: string): Promise<void> {
+   await write(["series", "sources", "chapters", "events"], async (t) => {
+     const src = await t.get<SeriesSource>("sources", sourceId);
+     if (!src) return;
+-    const siblings = (await t.byIndex<SeriesSource>("sources", "seriesId", src.seriesId)).filter((s) => s.id !== sourceId);
++    const siblings = (await t.byIndex<SeriesSource>("sources", "seriesId", src.seriesId)).filter((s) => s.id !== sourceId && !s.removedAt);
+     const target = siblings[0];
+     if (!target) throw new Error("A series needs at least one source. Remove the series instead.");
+-    await moveChaptersTx(t, sourceId, target);
+-    await t.delete("sources", sourceId);
+-    await refreshSeriesTx(t, src.seriesId);
++    src.removedAt = Date.now();
++    src.disabled = true;
++    await t.put("sources", src);
++    await refreshSeriesTx(t, src.seriesId, (s) => {
++      if (s.preferredSourceId === src.id) s.preferredSourceId = target.id;
++    });
+   });
+ }
+ 
+diff --git a/src/storage/schema.ts b/src/storage/schema.ts
+index 40ca24c..331d4e1 100644
+--- a/src/storage/schema.ts
++++ b/src/storage/schema.ts
+@@ -84,6 +84,7 @@ export function createChapter(init: { seriesId: string; sourceId: string; label:
+     ordinal: p.ordinal,
+     url: init.url,
+     canonicalUrl: canonicalizeUrl(init.url),
++    progressRevision: 0,
+     visitCount: 0,
+     maxProgress: 0,
+     readingTimeMs: 0,
+@@ -150,6 +151,7 @@ export function repairSource(raw: Partial<SeriesSource> & Record<string, unknown
+     coverCandidates: strArr(raw.coverCandidates),
+     consecutiveFailures: num(raw.consecutiveFailures) ?? 0,
+     disabled: bool(raw.disabled),
++    removedAt: num(raw.removedAt),
+     discoveredAt: num(raw.discoveredAt) ?? now,
+     updatedAt: num(raw.updatedAt) ?? now,
+   };
+@@ -176,6 +178,7 @@ export function repairChapter(raw: Partial<Chapter> & Record<string, unknown>):
+     chapterNumber: num(raw.chapterNumber) ?? parsed.number,
+     url,
+     canonicalUrl: str(raw.canonicalUrl) ?? canonicalizeUrl(url),
++    progressRevision: Math.max(0, Math.floor(num(raw.progressRevision) ?? 0)),
+     visitCount: num(raw.visitCount) ?? 0,
+     maxProgress: Math.max(0, Math.min(1, num(raw.maxProgress) ?? 0)),
+     readingTimeMs: num(raw.readingTimeMs) ?? 0,
+diff --git a/src/storage/summary.ts b/src/storage/summary.ts
+index 5aee082..0c9f240 100644
+--- a/src/storage/summary.ts
++++ b/src/storage/summary.ts
+@@ -16,7 +16,9 @@ export interface SeriesState {
+ const ordKey = (o: number) => Math.round(o * 1000);
+ 
+ export function computeSeriesState(series: Series, chapters: Chapter[], sources: SeriesSource[]): SeriesState {
++  sources = sources.filter((s) => !s.removedAt);
+   const activeSources = new Set(sources.map((s) => s.id));
++  const activeChapters = chapters.filter((c) => activeSources.has(c.sourceId));
+   const preferred = series.preferredSourceId && activeSources.has(series.preferredSourceId) ? series.preferredSourceId : sources[0]?.id;
+ 
+   let lastOpened: Chapter | undefined;
+@@ -71,27 +73,32 @@ export function computeSeriesState(series: Series, chapters: Chapter[], sources:
+   let continueKind: SeriesSummary["continueKind"] = "none";
+   let target: Chapter | undefined;
+   if (frontierOrd !== undefined) {
+-    target = pickNext(chapters, frontierOrd, preferred);
++    target = pickNext(activeChapters, frontierOrd, preferred);
+     if (target) continueKind = target.lastOpenedAt && !target.completedAt ? "resume" : "next";
+   }
+   let continueUrlOverride: string | undefined;
+-  if (!target && frontier?.nextUrl && frontier.id === lastOpened?.id) {
++  if (!target && lastCompleted?.nextUrl && activeSources.has(lastCompleted.sourceId) && lastCompleted.id === lastOpened?.id) {
+     // The next chapter's label is unknown, but its URL was seen on the last chapter read.
+-    continueUrlOverride = frontier.nextUrl;
++    continueUrlOverride = lastCompleted.nextUrl;
+     continueKind = "next";
+   }
+-  if (!target && !continueUrlOverride && current && !current.completedAt) {
++  if (!target && !continueUrlOverride && current && activeSources.has(current.sourceId) && !current.completedAt) {
+     target = current;
+     continueKind = "resume";
+   }
+-  if (!target && !continueUrlOverride && lastOpened && !lastOpened.completedAt) {
++  if (!target && !continueUrlOverride && lastOpened && activeSources.has(lastOpened.sourceId) && !lastOpened.completedAt) {
+     target = lastOpened;
+     continueKind = "resume";
+   }
+-  if (!target && !continueUrlOverride && lastOpened) {
++  if (!target && !continueUrlOverride && lastOpened && activeSources.has(lastOpened.sourceId)) {
+     target = lastOpened;
+     continueKind = "last";
+   }
++  if (!target && !continueUrlOverride && current && !activeSources.has(current.sourceId)) {
++    target = activeChapters.find((c) => c.ordinal !== undefined && c.ordinal === current.ordinal && c.sourceId === preferred)
++      ?? activeChapters.find((c) => c.key === current.key);
++    if (target) continueKind = target.completedAt ? "last" : "resume";
++  }
+   let continueUrl = target?.url ?? continueUrlOverride;
+   if (!continueUrl) {
+     const src = sources.find((s) => s.id === preferred) ?? sources[0];
+diff --git a/src/storage/tracking.ts b/src/storage/tracking.ts
+index 9c7689f..0d61b22 100644
+--- a/src/storage/tracking.ts
++++ b/src/storage/tracking.ts
+@@ -22,6 +22,8 @@ export interface TrackResult {
+   seriesTitle: string;
+   chapterId?: string;
+   chapterLabel?: string;
++  chapterProgressRevision?: number;
++  chapterProgress?: number;
+   created: boolean;
+   restored: boolean;
+   /** Cover the caller should download and cache (outside the DB transaction). */
+@@ -157,7 +159,7 @@ export async function upsertChapterListTx(
+     const parsed = parseChapterLabel(link.label || chapterLabelFromUrl(new URL(link.url)) || "");
+     if (!parsed.label || seen.has(parsed.key)) continue;
+     seen.add(parsed.key);
+-    const existing = await t.firstByIndex<Chapter>("chapters", "sourceKey", [source.id, parsed.key]);
++    const existing = (await t.byIndex<Chapter>("chapters", "canonicalUrl", canonicalizeUrl(link.url))).find((c) => c.sourceId === source.id) ?? await t.firstByIndex<Chapter>("chapters", "sourceKey", [source.id, parsed.key]);
+     if (existing) {
+       const canon = canonicalizeUrl(link.url);
+       let changed = false;
+@@ -222,6 +224,8 @@ function result(r: Resolved, s: Series, coverUrl?: string, chapter?: Chapter): T
+     seriesTitle: s.title,
+     chapterId: chapter?.id,
+     chapterLabel: chapter?.chapterLabel,
++    chapterProgressRevision: chapter ? chapter.progressRevision ?? 0 : undefined,
++    chapterProgress: chapter?.maxProgress,
+     created: r.created,
+     restored: r.restored,
+     coverUrl,
+@@ -235,6 +239,7 @@ export interface OpenOptions {
+   now?: number;
+   /** Chapter the user left by clicking its detected "next chapter" link. */
+   completedViaNext?: string;
++  completedViaNextRevision?: number;
+ }
+ 
+ export async function trackChapterOpened(obs: PageObservation, opts: OpenOptions = {}): Promise<TrackResult | null> {
+@@ -244,15 +249,15 @@ export async function trackChapterOpened(obs: PageObservation, opts: OpenOptions
+   const now = opts.now ?? Date.now();
+ 
+   return write([...TRACK_STORES], async (t) => {
+-    if (opts.completedViaNext) await completeTx(t, opts.completedViaNext, "next-link", now);
++    if (opts.completedViaNext) await completeTx(t, opts.completedViaNext, "next-link", now, opts.completedViaNextRevision);
+ 
+     const r = await resolveTx(t, detected, false, now);
+     applyDetectedMetadata(r.series, r.source, detected, false, obs.adapterId, now);
+ 
+     const parsed = parseChapterLabel(ch.label);
+     let chapter =
+-      (await t.firstByIndex<Chapter>("chapters", "sourceKey", [r.source.id, parsed.key])) ??
+-      (await t.byIndex<Chapter>("chapters", "canonicalUrl", ch.canonicalUrl)).find((c) => c.sourceId === r.source.id);
++      (await t.byIndex<Chapter>("chapters", "canonicalUrl", ch.canonicalUrl)).find((c) => c.sourceId === r.source.id) ??
++      (await t.firstByIndex<Chapter>("chapters", "sourceKey", [r.source.id, parsed.key]));
+     if (!chapter) chapter = createChapter({ seriesId: r.series.id, sourceId: r.source.id, label: ch.label, url: ch.url, now });
+ 
+     // A chapter first learned from a link or list gets the site's own label once opened.
+@@ -298,9 +303,9 @@ export async function trackChapterOpened(obs: PageObservation, opts: OpenOptions
+   });
+ }
+ 
+-async function completeTx(t: Tx, chapterId: string, source: CompletionSource, now: number): Promise<boolean> {
++async function completeTx(t: Tx, chapterId: string, source: CompletionSource, now: number, progressRevision?: number): Promise<boolean> {
+   const c = await t.get<Chapter>("chapters", chapterId);
+-  if (!c || c.completedAt) return false;
++  if (!c || c.completedAt || (progressRevision ?? 0) !== (c.progressRevision ?? 0)) return false;
+   c.completedAt = now;
+   c.completionSource = source;
+   c.maxProgress = Math.max(c.maxProgress, source === "next-link" ? c.maxProgress : 1);
+@@ -311,11 +316,12 @@ async function completeTx(t: Tx, chapterId: string, source: CompletionSource, no
+   return true;
+ }
+ 
+-export async function completeChapter(chapterId: string, source: CompletionSource, now = Date.now()): Promise<boolean> {
+-  return write([...TRACK_STORES], (t) => completeTx(t, chapterId, source, now));
++export async function completeChapter(chapterId: string, source: CompletionSource, now = Date.now(), progressRevision?: number): Promise<boolean> {
++  return write([...TRACK_STORES], (t) => completeTx(t, chapterId, source, now, progressRevision));
+ }
+ 
+ export interface ProgressUpdate {
++  progressRevision?: number;
+   progress: number;
+   readingTimeDeltaMs: number;
+   threshold: number;
+@@ -323,10 +329,11 @@ export interface ProgressUpdate {
+   final?: boolean;
+ }
+ 
+-export async function recordProgress(chapterId: string, u: ProgressUpdate, now = Date.now()): Promise<{ completed: boolean; progress: number }> {
++export async function recordProgress(chapterId: string, u: ProgressUpdate, now = Date.now()): Promise<{ completed: boolean; progress: number; progressRevision?: number; stale?: boolean }> {
+   return write([...TRACK_STORES], async (t) => {
+     const c = await t.get<Chapter>("chapters", chapterId);
+     if (!c) return { completed: false, progress: 0 };
++    if ((u.progressRevision ?? 0) !== (c.progressRevision ?? 0)) return { completed: false, progress: c.maxProgress, progressRevision: c.progressRevision ?? 0, stale: true };
+     const p = Math.max(0, Math.min(1, Number.isFinite(u.progress) ? u.progress : 0));
+     const delta = Math.max(0, Math.min(MAX_PROGRESS_DELTA_MS, u.readingTimeDeltaMs || 0));
+     c.maxProgress = Math.max(c.maxProgress, p);
+@@ -334,14 +341,14 @@ export async function recordProgress(chapterId: string, u: ProgressUpdate, now =
+     await t.put("chapters", c);
+     let completed = false;
+     if (!c.completedAt && c.maxProgress >= u.threshold) {
+-      completed = await completeTx(t, c.id, "progress", now);
++      completed = await completeTx(t, c.id, "progress", now, u.progressRevision);
+     } else {
+       if (u.final && !c.completedAt && c.maxProgress >= 0.05) {
+         await addEventTx(t, { seriesId: c.seriesId, chapterId: c.id, type: "progress", timestamp: now, progress: c.maxProgress, chapterLabel: c.chapterLabel });
+       }
+       await refreshSeriesTx(t, c.seriesId);
+     }
+-    return { completed, progress: c.maxProgress };
++    return { completed, progress: c.maxProgress, progressRevision: c.progressRevision ?? 0 };
+   });
+ }
+ 
+@@ -354,7 +361,7 @@ export type UpdateCheckOutcome =
+ export async function applyUpdateCheck(sourceId: string, outcome: UpdateCheckOutcome, now = Date.now()): Promise<{ series?: Series; newChapters: Chapter[] }> {
+   return write([...TRACK_STORES], async (t) => {
+     const source = await t.get<SeriesSource>("sources", sourceId);
+-    if (!source) return { newChapters: [] };
++    if (!source || source.removedAt) return { newChapters: [] };
+     source.lastCheckedAt = now;
+     if (!outcome.ok) {
+       source.consecutiveFailures = (source.consecutiveFailures ?? 0) + 1;
+@@ -365,9 +372,17 @@ export async function applyUpdateCheck(sourceId: string, outcome: UpdateCheckOut
+     const series = await getSeriesTx(t, source.seriesId);
+     if (!series) return { newChapters: [] };
+ 
++    const changedUrl = outcome.finalUrl !== undefined && (!isSafeHttpUrl(outcome.finalUrl) || canonicalizeUrl(outcome.finalUrl) !== source.canonicalSeriesUrl);
++    const sameTitle = !!outcome.title && [...series.titleKeys, normalizeTitle(source.sourceTitle ?? ""), normalizeTitle(series.detectedTitle ?? "")].includes(normalizeTitle(outcome.title));
++    if ((outcome.title && !sameTitle) || (changedUrl && (!sameTitle || !isSafeHttpUrl(outcome.finalUrl!) || sourceHost(outcome.finalUrl!) !== source.hostname))) {
++      source.consecutiveFailures = (source.consecutiveFailures ?? 0) + 1;
++      source.lastError = "Update page does not match the tracked series.";
++      await t.put("sources", source);
++      return { newChapters: [] };
++    }
++
+     // The page redirected: accept the new location only if it is still clearly this series.
+     if (outcome.finalUrl && isSafeHttpUrl(outcome.finalUrl) && canonicalizeUrl(outcome.finalUrl) !== source.canonicalSeriesUrl) {
+-      const sameTitle = outcome.title && series.titleKeys.includes(normalizeTitle(outcome.title));
+       if (sameTitle && sourceHost(outcome.finalUrl) === source.hostname) {
+         relocateSource(source, { title: outcome.title!, alternateTitles: [], seriesUrl: outcome.finalUrl, canonicalSeriesUrl: canonicalizeUrl(outcome.finalUrl), coverCandidates: [], chapterList: [] });
+       }
+diff --git a/tests/migrations/migrations.test.ts b/tests/migrations/migrations.test.ts
+index cb35f92..e6a4deb 100644
+--- a/tests/migrations/migrations.test.ts
++++ b/tests/migrations/migrations.test.ts
+@@ -64,13 +64,25 @@ describe("schema migrations", () => {
+     const v1 = await open(name, 1, MIGRATIONS);
+     await put(v1, "series", { id: "s1", title: "Keep me" });
+     v1.close();
+-    await expect(open(name, 3, { ...MIGRATIONS, 3: () => undefined })).rejects.toBeTruthy();
++    await expect(open(name, 3, { 1: MIGRATIONS[1]!, 3: () => undefined })).rejects.toBeTruthy();
+     const again = await open(name, 1, MIGRATIONS);
+     expect(again.version).toBe(1);
+     expect(await getAll(again, "series")).toHaveLength(1);
+     again.close();
+   });
+ 
++  it("upgrades legacy chapter revisions without changing historical progress or sources", async () => {
++    const name = `mig-${crypto.randomUUID()}`;
++    const v1 = await open(name, 1, MIGRATIONS);
++    await put(v1, "chapters", { id: "c1", sourceId: "src", maxProgress: 0.7, readingTimeMs: 123 });
++    await put(v1, "sources", { id: "src", seriesUrl: "https://old.example/series" });
++    v1.close();
++    const upgraded = await open(name, SCHEMA_VERSION, MIGRATIONS);
++    expect(await getAll(upgraded, "chapters")).toEqual([{ id: "c1", sourceId: "src", maxProgress: 0.7, readingTimeMs: 123, progressRevision: 0 }]);
++    expect(await getAll(upgraded, "sources")).toEqual([{ id: "src", seriesUrl: "https://old.example/series", removedAt: undefined }]);
++    upgraded.close();
++  });
++
+   it("repairs records with missing optional fields instead of dropping them", () => {
+     const s = repairSeries({ id: "x", title: "Only required fields" } as never);
+     expect(s).toMatchObject({ status: "reading", tags: [], favorite: false, sourceIds: [], userFields: [] });
+diff --git a/tests/storage/backup.test.ts b/tests/storage/backup.test.ts
+index 7b29df5..39d4dab 100644
+--- a/tests/storage/backup.test.ts
++++ b/tests/storage/backup.test.ts
+@@ -24,7 +24,7 @@ describe("export / import", () => {
+     await seed();
+     const file = await exportLibrary({ includeCovers: true });
+     expect(file.application).toBe("ManwhaTrack");
+-    expect(file.exportVersion).toBe(1);
++    expect(file.exportVersion).toBe(2);
+     expect(file.series[0]).not.toHaveProperty("summary");
+     expect(file.covers).toHaveLength(1);
+ 
+diff --git a/tests/storage/library.test.ts b/tests/storage/library.test.ts
+index 6ab2376..564ecb9 100644
+--- a/tests/storage/library.test.ts
++++ b/tests/storage/library.test.ts
+@@ -135,13 +135,16 @@ describe("multiple sources and deduplication", () => {
+     expect((await getSeries(a!.seriesId))?.sourceIds).toHaveLength(1);
+   });
+ 
+-  it("removing a source keeps its progress on the remaining source", async () => {
++  it("removing a source preserves its historical progress and excludes its URLs from Continue", async () => {
+     const a = await trackChapterOpened(chapterObs({ title: "Solo Leveling", seriesUrl: SL, label: "Chapter 1", url: slChapter(1), alts: ["Only I Level Up"] }));
+     const b = await trackChapterOpened(chapterObs({ title: "Solo Leveling", seriesUrl: OTHER, label: "Chapter 2", url: `${OTHER}chapter-2/`, alts: ["Only I Level Up"] }));
+     await completeChapter(b!.chapterId!, "progress");
+     await removeSource(b!.sourceId);
+     const s = await getSeries(a!.seriesId);
+-    expect(s?.sourceIds).toHaveLength(1);
++    expect(s?.sourceIds).toHaveLength(2);
++    expect(await listSources(a!.seriesId)).toHaveLength(1);
++    expect((await listChapters(a!.seriesId)).find((c) => c.id === b!.chapterId)?.sourceId).toBe(b!.sourceId);
++    expect(s?.summary.continueUrl).toBe(SL);
+     expect(s?.summary.lastCompletedLabel).toBe("Chapter 2");
+   });
+ 
+
+NEW tests/storage/integrity.test.ts
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { freshDb, chapterObs, seriesObs, SL, slChapter } from "../../tests/helpers/obs";
+import { trackChapterOpened, trackSeriesPage, recordProgress, completeChapter, applyUpdateCheck } from "../../src/storage/tracking";
+import { listChapters, editChapter, markChapters } from "../../src/storage/repositories/chapters";
+import { getSeries, removeSeries } from "../../src/storage/repositories/series";
+import { exportLibrary, parseBackup, applyImport } from "../../src/storage/backup";
+import { mergeSeries, removeSource, listSources } from "../../src/storage/repositories/sources";
+import { saveSettings } from "../../src/storage/repositories/settings";
+
+
+beforeEach(() => freshDb());
+afterEach(() => vi.unstubAllGlobals());
+const observation = () => chapterObs({ title: "Solo Leveling", seriesUrl: SL, label: "Chapter 31", url: slChapter(31), next: slChapter(32) });
+
+it("repeated merge import preserves counters", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  await recordProgress(r.chapterId!, { progress: 0.2, readingTimeDeltaMs: 10_000, threshold: 0.85 });
+  const file = await exportLibrary();
+  await applyImport(file, "merge");
+  const ch = (await listChapters(r.seriesId)).find(c => c.id === r.chapterId)!;
+  expect(ch.visitCount).toBe(1);
+  expect(ch.readingTimeMs).toBe(10_000);
+});
+
+it("rediscovery preserves corrected chapter identity", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  await editChapter(r.chapterId!, { label: "Chapter 30" });
+  await trackSeriesPage(seriesObs({ title: "Solo Leveling", url: SL, chapters: [{ label: "Chapter 31", url: slChapter(31) }] }));
+  const records = (await listChapters(r.seriesId)).filter(c => c.url === slChapter(31));
+  expect(records).toHaveLength(1);
+});
+
+it("lowering manual progress does not immediately recomplete chapters", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  await markChapters(r.seriesId, [r.chapterId!], true);
+  const { setProgressTo } = await import("../../src/storage/repositories/chapters");
+  await setProgressTo(r.seriesId, "30");
+  await recordProgress(r.chapterId!, { progress: 0, readingTimeDeltaMs: 0, threshold: 0.85 });
+  const c = (await listChapters(r.seriesId)).find(c => c.id === r.chapterId)!;
+  expect(c.completedAt).toBeUndefined();
+});
+
+it("export contains no dependents of omitted removed series", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  await removeSeries([r.seriesId]);
+  const file = await exportLibrary();
+  const parsed = parseBackup(JSON.stringify(file));
+  expect(file.sources).toHaveLength(0);
+  expect(file.chapters).toHaveLength(0);
+  expect(file.history).toHaveLength(0);
+});
+
+it("completed special chapter continues through its next link", async () => {
+  const r = (await trackChapterOpened(chapterObs({ title: "Solo Leveling", seriesUrl: SL, label: "Prologue", url: `${SL}prologue/`, next: slChapter(1) })))!;
+  await completeChapter(r.chapterId!, "next-link");
+  const s = (await getSeries(r.seriesId))!;
+  expect(s.summary.continueUrl).toBe(slChapter(1));
+});
+
+it("removing a source does not continue to that source", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  const b = (await trackSeriesPage(seriesObs({ title: "Solo Leveling", url: "https://other.example/series/solo/" })))!;
+  await mergeSeries(r.seriesId, b.seriesId);
+  await removeSource(r.sourceId);
+  const s = (await getSeries(r.seriesId))!;
+  expect(new URL(s.summary.continueUrl!).hostname).toBe("other.example");
+});
+
+it("a settings failure reports committed library accurately", async () => {
+  await trackChapterOpened(observation());
+  const file = await exportLibrary();
+  file.settings = { theme: "dark" };
+  freshDb();
+  vi.stubGlobal("chrome", { storage: { local: { get: async () => ({}), set: async () => { throw new Error("simulated settings write failure"); } } } });
+  const result = await applyImport(file, "merge", { importSettings: true });
+  expect(result.settingsWarning).toBe("Library imported, but settings could not be saved. Your existing settings were kept.");
+  const committed = await getSeries(file.series[0]!.id);
+  expect(committed).toBeDefined();
+});
+
+it("an unrelated redirect does not pollute a tracked series", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  await applyUpdateCheck(r.sourceId, {
+    ok: true,
+    title: "Unrelated Series",
+    finalUrl: "https://example-scans.com/manga/unrelated-series/",
+    chapters: [{ label: "Chapter 999", url: "https://example-scans.com/manga/unrelated-series/chapter-999/" }],
+  });
+  const c = (await listChapters(r.seriesId)).filter(c => c.chapterNumber === 999);
+  expect(c).toHaveLength(0);
+});
+
+it("manual unread invalidates stale progress and next-link completion across database restart", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  await recordProgress(r.chapterId!, { progress: 0.6, readingTimeDeltaMs: 1000, threshold: 0.85 });
+  await markChapters(r.seriesId, [r.chapterId!], false);
+  const { closeDb } = await import("../../src/storage/db");
+  closeDb();
+  const stale = await recordProgress(r.chapterId!, { progress: 1, readingTimeDeltaMs: 1000, threshold: 0.85, progressRevision: 0 });
+  expect(stale.stale).toBe(true);
+  expect(await completeChapter(r.chapterId!, "next-link", Date.now(), 0)).toBe(false);
+  const c = (await listChapters(r.seriesId)).find(c => c.id === r.chapterId)!;
+  expect(c.maxProgress).toBe(0);
+  expect(c.completedAt).toBeUndefined();
+  expect(c.readingTimeMs).toBe(1000);
+  expect(c.progressRevision).toBe(1);
+  const opened = (await trackChapterOpened(observation()))!;
+  expect(opened.chapterProgressRevision).toBe(1);
+  expect(opened.chapterProgress).toBe(0);
+  expect((await recordProgress(c.id, { progress: 0.3, readingTimeDeltaMs: 10, threshold: 0.85, progressRevision: 1 })).stale).toBeUndefined();
+});
+
+it("lowering progress resets automatic completions as well as manual ones", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  await recordProgress(r.chapterId!, { progress: 1, readingTimeDeltaMs: 0, threshold: 0.85 });
+  const { setProgressTo } = await import("../../src/storage/repositories/chapters");
+  await setProgressTo(r.seriesId, "30");
+  const c = (await listChapters(r.seriesId)).find(c => c.id === r.chapterId)!;
+  expect(c.completedAt).toBeUndefined();
+  expect(c.maxProgress).toBe(0);
+  expect(c.progressRevision).toBe(1);
+});
+
+it("removed source history remains round-trip portable with original URLs", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  const b = (await trackSeriesPage(seriesObs({ title: "Solo Leveling", url: "https://other.example/series/solo/" })))!;
+  await mergeSeries(r.seriesId, b.seriesId);
+  await removeSource(r.sourceId);
+  const file = await exportLibrary();
+  expect(file.sources.find(s => s.id === r.sourceId)?.removedAt).toBeDefined();
+  expect(file.chapters.find(c => c.id === r.chapterId)?.sourceId).toBe(r.sourceId);
+  expect(parseBackup(JSON.stringify(file))).toMatchObject({ ok: true, invalid: 0 });
+  freshDb();
+  await applyImport(file, "merge");
+  expect((await getSeries(r.seriesId))?.summary.continueUrl).toBe("https://other.example/series/solo/");
+});
+
+it("repeated snapshot import preserves event IDs and counters", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  await recordProgress(r.chapterId!, { progress: 0.2, readingTimeDeltaMs: 100, threshold: 0.85 });
+  const file = await exportLibrary();
+  await applyImport(file, "merge");
+  await applyImport(file, "merge");
+  const after = await exportLibrary();
+  expect(after.history.map(e => e.id)).toEqual(file.history.map(e => e.id));
+  expect(after.chapters.find(c => c.id === r.chapterId)).toMatchObject({ visitCount: 1, readingTimeMs: 100 });
+});
+
+it("progress invalidation notification failure does not roll back committed manual unread", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  await completeChapter(r.chapterId!, "progress");
+  vi.stubGlobal("chrome", { storage: { local: { set: async () => { throw new Error("notification failed"); } } } });
+  await expect(markChapters(r.seriesId, [r.chapterId!], false)).resolves.toBeUndefined();
+  expect((await listChapters(r.seriesId)).find(c => c.id === r.chapterId)).toMatchObject({ maxProgress: 0, progressRevision: 1, completedAt: undefined });
+});
+
+it("legacy backups explicitly migrate with revision defaults", async () => {
+  await trackChapterOpened(observation());
+  const file = await exportLibrary();
+  file.exportVersion = 1;
+  file.schemaVersion = 1;
+  for (const c of file.chapters) delete c.progressRevision;
+  const parsed = parseBackup(JSON.stringify(file));
+  expect(parsed).toMatchObject({ ok: true, invalid: 0, file: { exportVersion: 2, schemaVersion: 2 } });
+  if (parsed.ok) expect(parsed.file.chapters.every(c => c.progressRevision === 0)).toBe(true);
+});
+
+it("source removal prefers matching remaining chapter and preserves historical URL", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  const url = "https://other.example/series/solo/chapter-31/";
+  const b = (await trackChapterOpened(chapterObs({ title: "Solo Leveling", seriesUrl: "https://other.example/series/solo/", label: "Chapter 31", url })))!;
+  await mergeSeries(r.seriesId, b.seriesId);
+  await trackChapterOpened(observation());
+  await removeSource(r.sourceId);
+  expect((await getSeries(r.seriesId))?.summary.continueUrl).toBe(url);
+  expect((await listChapters(r.seriesId)).find(c => c.id === r.chapterId)?.url).toBe(slChapter(31));
+});
+
+it("unrelated update rejection records source failure without successful timestamp", async () => {
+  const r = (await trackChapterOpened(observation()))!;
+  await applyUpdateCheck(r.sourceId, { ok: true, title: "Another work", finalUrl: SL, chapters: [] }, 100);
+  expect((await listSources(r.seriesId))[0]).toMatchObject({ consecutiveFailures: 1, lastCheckedAt: 100, lastError: "Update page does not match the tracked series." });
+  expect((await listSources(r.seriesId))[0]?.lastSuccessfulCheckAt).toBeUndefined();
+});
