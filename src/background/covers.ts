@@ -1,12 +1,13 @@
 // Downloads cover images once and caches them locally as small blobs.
 
 import { fetchImage } from "./net";
-import { setCustomCover, setDetectedCover, type NewCover } from "../storage/repositories/covers";
+import { getCover, setCustomCover, setDetectedCover, type NewCover } from "../storage/repositories/covers";
 import { getSeries } from "../storage/repositories/series";
 import { listSources } from "../storage/repositories/sources";
 import { isSafeHttpUrl } from "../detection/normalization/url";
 import { publish } from "../shared/bus";
 import { warn } from "./log";
+import { getCoverStatus, setCoverStatus } from "../storage/cover-status";
 
 const MAX_WIDTH = 360;
 const inflight = new Map<string, Promise<void>>();
@@ -47,12 +48,26 @@ export function cacheDetectedCover(seriesId: string, url: string, referer?: stri
   let p = inflight.get(k);
   if (!p) {
     p = (async () => {
+      const now = Date.now();
+      let attemptedDownload = false;
       try {
+        const series = await getSeries(seriesId);
+        if (!series || series.removedAt) return;
+        const previous = await getCoverStatus(seriesId);
+        const cached = series.detectedCoverId ? await getCover(series.detectedCoverId) : undefined;
+        if (previous?.url === url && ((previous.state === "ready" && cached?.blob) || (previous.state === "pending" && now - previous.attemptedAt < 120_000) || (previous.state === "failed" && now < (previous.retryAfter ?? 0)))) {
+          return;
+        }
+        await setCoverStatus(seriesId, { state: "pending", url, attemptedAt: now });
+        attemptedDownload = true;
         const asset = await downloadCover(url, referer);
         await setDetectedCover(seriesId, asset);
+        await setCoverStatus(seriesId, { state: "ready", url, attemptedAt: now });
         publish({ type: "library-changed", seriesIds: [seriesId] });
       } catch (err) {
         warn("cover", err);
+        if (attemptedDownload) await setCoverStatus(seriesId, { state: "failed", url, attemptedAt: now, retryAfter: now + 15 * 60_000, error: "Cover could not be downloaded. Retry from the series details." }).catch(diagnosticError => warn("cover diagnostics", diagnosticError));
+        publish({ type: "library-changed", seriesIds: [seriesId] });
       } finally {
         inflight.delete(k);
       }
@@ -68,18 +83,24 @@ export async function refreshCover(seriesId: string, chosenUrl?: string): Promis
   if (!series) return { ok: false, error: "Series not found." };
   const sources = await listSources(seriesId);
   const src = sources.find((s) => s.id === series.preferredSourceId) ?? sources[0];
+  const url = chosenUrl ?? src?.coverUrl ?? src?.coverCandidates[0];
+  if (!url) return { ok: false, error: "No cover has been detected for this series yet." };
+  const attemptedAt = Date.now();
   try {
+    await setCoverStatus(seriesId, { state: "pending", url, attemptedAt });
     if (chosenUrl) {
       const asset = await downloadCover(chosenUrl, src?.seriesUrl);
       await setCustomCover(seriesId, { ...asset, origin: "custom" });
     } else {
-      const url = src?.coverUrl ?? src?.coverCandidates[0];
-      if (!url) return { ok: false, error: "No cover has been detected for this series yet." };
       await setDetectedCover(seriesId, await downloadCover(url, src?.seriesUrl));
     }
+    await setCoverStatus(seriesId, { state: "ready", url, attemptedAt });
     publish({ type: "library-changed", seriesIds: [seriesId] });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "Cover could not be downloaded." };
+    const error = "Cover could not be downloaded. The source may be unavailable.";
+    await setCoverStatus(seriesId, { state: "failed", url, attemptedAt, error, retryAfter: attemptedAt + 15 * 60_000 }).catch(diagnosticError => warn("cover diagnostics", diagnosticError));
+    publish({ type: "library-changed", seriesIds: [seriesId] });
+    return { ok: false, error };
   }
 }
