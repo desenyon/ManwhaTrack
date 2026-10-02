@@ -1,10 +1,19 @@
 import type { Chapter, ReadingEvent, SeriesSource } from "../../shared/types/models";
+import { sanitizeReadingPosition } from "../../shared/reading-position";
 import { read, write, type Tx } from "../db";
 import { createChapter, newId, repairChapter } from "../schema";
 import { refreshSeriesTx } from "./series";
 import { parseChapterLabel } from "../../detection/normalization/chapter";
 import { sortChapters } from "../summary";
 import { sourceHost } from "../../detection/normalization/url";
+
+/** Mutates only the latest viewport; furthest progress/completion remain separate. */
+export function updateReadingPosition(chapter: Chapter, raw: unknown, now = Date.now()): void {
+  const p = sanitizeReadingPosition(raw);
+  if (!p || p.progressRevision !== (chapter.progressRevision ?? 0) || p.capturedAt > now + 60_000) return;
+  const prior = chapter.readingPosition;
+  if (!prior || prior.progressRevision !== p.progressRevision || p.capturedAt >= prior.capturedAt) chapter.readingPosition = p;
+}
 
 export async function listChapters(seriesId: string): Promise<Chapter[]> {
   const raw = await read(["chapters"], (t) => t.byIndex<Chapter>("chapters", "seriesId", seriesId));
@@ -13,6 +22,16 @@ export async function listChapters(seriesId: string): Promise<Chapter[]> {
 
 export async function addEventTx(t: Tx, e: Omit<ReadingEvent, "id">): Promise<void> {
   await t.put("events", { id: newId(), ...e });
+}
+
+export async function notifyProgressChanged(seriesId: string): Promise<void> {
+  try {
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      await chrome.storage.local.set({ "reading:revision": { seriesId, at: Date.now(), token: newId() } });
+    }
+  } catch {
+    // The revision stored with each chapter still rejects stale automatic writes.
+  }
 }
 
 function sameOrdinal(a: Chapter, b: Chapter): boolean {
@@ -30,12 +49,13 @@ export async function markChapters(seriesId: string, chapterIds: string[], readS
     const targets = all.filter((c) => chapterIds.includes(c.id));
     for (const target of targets) {
       for (const c of all.filter((x) => sameOrdinal(x, target))) {
-        if (readState && !c.completedAt) {
+        c.progressRevision = (c.progressRevision ?? 0) + 1;
+        if (readState) {
           c.completedAt = now;
           c.completionSource = "manual";
           c.maxProgress = Math.max(c.maxProgress, 1);
           await t.put("chapters", c);
-        } else if (!readState && c.completedAt) {
+        } else {
           c.completedAt = undefined;
           c.completionSource = undefined;
           c.maxProgress = 0;
@@ -53,18 +73,20 @@ export async function markChapters(seriesId: string, chapterIds: string[], readS
     }
     await refreshSeriesTx(t, seriesId);
   });
+  await notifyProgressChanged(seriesId);
 }
 
 /** Marks every known chapter up to and including the given one as read. */
 export async function markReadUpTo(seriesId: string, chapterId: string): Promise<number> {
   const now = Date.now();
-  return write(["series", "chapters", "sources", "events"], async (t) => {
+  const count = await write(["series", "chapters", "sources", "events"], async (t) => {
     const all = await t.byIndex<Chapter>("chapters", "seriesId", seriesId);
     const target = all.find((c) => c.id === chapterId);
     if (!target || target.ordinal === undefined) return 0;
     let n = 0;
     for (const c of all) {
       if (c.ordinal !== undefined && c.ordinal <= target.ordinal + 1e-6 && !c.completedAt) {
+        c.progressRevision = (c.progressRevision ?? 0) + 1;
         c.completedAt = now;
         c.completionSource = "manual";
         c.maxProgress = 1;
@@ -76,6 +98,8 @@ export async function markReadUpTo(seriesId: string, chapterId: string): Promise
     await refreshSeriesTx(t, seriesId);
     return n;
   });
+  await notifyProgressChanged(seriesId);
+  return count;
 }
 
 /**
@@ -88,7 +112,7 @@ export async function setProgressTo(seriesId: string, label: string): Promise<vo
   const now = Date.now();
   await write(["series", "chapters", "sources", "events"], async (t) => {
     const series = await t.get<{ preferredSourceId?: string }>("series", seriesId);
-    const sources = await t.byIndex<SeriesSource>("sources", "seriesId", seriesId);
+    const sources = (await t.byIndex<SeriesSource>("sources", "seriesId", seriesId)).filter((s) => !s.removedAt);
     const source = sources.find((s) => s.id === series?.preferredSourceId) ?? sources[0];
     if (!source) throw new Error("This series has no source");
     const all = await t.byIndex<Chapter>("chapters", "seriesId", seriesId);
@@ -102,14 +126,16 @@ export async function setProgressTo(seriesId: string, label: string): Promise<vo
     for (const c of all) {
       if (c.ordinal === undefined) continue;
       const shouldRead = c.ordinal <= parsed.ordinal! + 1e-6;
-      if (shouldRead && !c.completedAt) {
+      c.progressRevision = (c.progressRevision ?? 0) + 1;
+      if (shouldRead) {
         c.completedAt = now;
         c.completionSource = "manual";
         c.maxProgress = 1;
         await t.put("chapters", c);
-      } else if (!shouldRead && c.completedAt && c.completionSource === "manual") {
+      } else {
         c.completedAt = undefined;
         c.completionSource = undefined;
+        c.maxProgress = 0;
         await t.put("chapters", c);
       }
     }
@@ -118,6 +144,7 @@ export async function setProgressTo(seriesId: string, label: string): Promise<vo
       s.currentChapterId = target!.id;
     });
   });
+  await notifyProgressChanged(seriesId);
 }
 
 /** User correction of a chapter's label or number. Survives future detections. */
@@ -133,7 +160,7 @@ export async function editChapter(chapterId: string, edit: { label?: string; num
         c.ordinal = p.ordinal;
         c.chapterNumber = p.number;
       }
-      c.key = p.key;
+      // Display corrections must not change the detected source identity.
       if (!c.userFields.includes("label")) c.userFields.push("label");
     }
     if (edit.number !== undefined) {
