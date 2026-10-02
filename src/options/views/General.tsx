@@ -43,26 +43,31 @@ export function GeneralSection({ settings, update }: SectionProps) {
       <p className="lead">ManwhaTrack tracks series and chapters automatically as you read.</p>
 
       <Setting title="Theme">
-        <select className="select" value={settings.theme} onChange={(e) => void update({ theme: e.target.value as Settings["theme"] })}>
+        <select className="select" aria-label="Theme" value={settings.theme} onChange={(e) => void update({ theme: e.target.value as Settings["theme"] })}>
           <option value="system">System</option>
           <option value="light">Light</option>
           <option value="dark">Dark</option>
         </select>
       </Setting>
+      <Setting title="Artwork motion" desc="System follows your device’s reduced-motion preference. You can also play or pause artwork from the library footer.">
+        <select className="select" aria-label="Artwork motion" value={settings.artworkMotion} onChange={(e) => void update({ artworkMotion: e.target.value as Settings["artworkMotion"] })}>
+          <option value="system">System</option><option value="on">On</option><option value="off">Off</option>
+        </select>
+      </Setting>
       <Setting title="Library layout">
-        <select className="select" value={settings.layout} onChange={(e) => void update({ layout: e.target.value as Settings["layout"] })}>
+        <select className="select" aria-label="Library layout" value={settings.layout} onChange={(e) => void update({ layout: e.target.value as Settings["layout"] })}>
           <option value="list">Compact list</option>
           <option value="grid">Grid</option>
         </select>
       </Setting>
       <Setting title="Continue opens in" desc="Ctrl/⌘-click or middle-click always opens a new tab.">
-        <select className="select" value={settings.continueIn} onChange={(e) => void update({ continueIn: e.target.value as Settings["continueIn"] })}>
+        <select className="select" aria-label="Continue opens in" value={settings.continueIn} onChange={(e) => void update({ continueIn: e.target.value as Settings["continueIn"] })}>
           <option value="current">Current tab</option>
           <option value="new">New tab</option>
         </select>
       </Setting>
       <Setting title="Chapter counts as read at" desc="Measured through the chapter's reader area, not the whole page. Clicking the site's Next Chapter link also marks it read.">
-        <select className="select" value={settings.completionThreshold} onChange={(e) => void update({ completionThreshold: Number(e.target.value) })}>
+        <select className="select" aria-label="Chapter counts as read at" value={settings.completionThreshold} onChange={(e) => void update({ completionThreshold: Number(e.target.value) })}>
           {[0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1].map((v) => (
             <option key={v} value={v}>{Math.round(v * 100)}%</option>
           ))}
@@ -77,7 +82,7 @@ export function GeneralSection({ settings, update }: SectionProps) {
         <Toggle label="Check for new chapters" checked={settings.updateChecks} onChange={(v) => void update({ updateChecks: v })} />
       </Setting>
       <Setting title="Minimum time between checks of one source">
-        <select className="select" value={settings.updateIntervalHours} disabled={!settings.updateChecks} onChange={(e) => void update({ updateIntervalHours: Number(e.target.value) })}>
+        <select className="select" aria-label="Minimum time between checks of one source" value={settings.updateIntervalHours} disabled={!settings.updateChecks} onChange={(e) => void update({ updateIntervalHours: Number(e.target.value) })}>
           {[6, 12, 24, 48, 168].map((h) => (
             <option key={h} value={h}>{h < 24 ? `${h} hours` : h === 168 ? "1 week" : `${h / 24} day${h > 24 ? "s" : ""}`}</option>
           ))}
@@ -87,7 +92,7 @@ export function GeneralSection({ settings, update }: SectionProps) {
         <Toggle label="Toolbar badge" checked={settings.badge} onChange={(v) => void update({ badge: v })} />
       </Setting>
       <Setting title="Notifications" desc="Chrome will ask for permission when you turn this on.">
-        <select className="select" value={settings.notifications} onChange={(e) => void setNotifications(e.target.value as Settings["notifications"])}>
+        <select className="select" aria-label="Notifications" value={settings.notifications} onChange={(e) => void setNotifications(e.target.value as Settings["notifications"])}>
           <option value="off">Off</option>
           <option value="favorites">Only favorites</option>
           <option value="all">All tracked series</option>
