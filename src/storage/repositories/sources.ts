@@ -1,7 +1,9 @@
+import { remapCollectionSeriesTx } from "./collections";
 import type { Chapter, ReadingEvent, Series, SeriesSource, SourceHealth } from "../../shared/types/models";
 import { read, write, type Tx } from "../db";
 import { createSeries, repairSource } from "../schema";
 import { getSeriesTx, putSeriesTx, refreshSeriesTx } from "./series";
+import { sanitizeReadingPosition } from "../../shared/reading-position";
 
 const DAY = 86_400_000;
 
@@ -15,7 +17,7 @@ export function sourceHealth(s: SeriesSource, now = Date.now()): SourceHealth {
 
 export async function listSources(seriesId?: string): Promise<SeriesSource[]> {
   const raw = await read(["sources"], (t) => (seriesId ? t.byIndex<SeriesSource>("sources", "seriesId", seriesId) : t.getAll<SeriesSource>("sources")));
-  return raw.map((s) => repairSource(s as SeriesSource & Record<string, unknown>)).filter((s): s is SeriesSource => !!s);
+  return raw.map((s) => repairSource(s as SeriesSource & Record<string, unknown>)).filter((s): s is SeriesSource => !!s && !s.removedAt);
 }
 
 export async function updateSource(id: string, patch: Partial<Pick<SeriesSource, "disabled" | "seriesUrl">>): Promise<void> {
@@ -28,16 +30,36 @@ export async function updateSource(id: string, patch: Partial<Pick<SeriesSource,
 }
 
 /** Folds chapter `from` into `into` (same chapter, different record), keeping all progress. */
-export function mergeChapterInto(into: Chapter, from: Chapter): void {
+export function mergeChapterInto(into: Chapter, from: Chapter, snapshot = false): void {
+  const positions = [sanitizeReadingPosition(into.readingPosition),
+    into.canonicalUrl === from.canonicalUrl ? sanitizeReadingPosition(from.readingPosition) : undefined]
+    .filter(p => p && p.progressRevision === Math.max(into.progressRevision ?? 0, from.progressRevision ?? 0))
+    .sort((a, b) => b!.capturedAt - a!.capturedAt);
+  into.associationOverridden ||= from.associationOverridden;
+  if (from.userFields.includes("label") && !into.userFields.includes("label")) {
+    into.chapterLabel = from.chapterLabel;
+    into.title = from.title;
+    if (!into.userFields.includes("number")) {
+      into.chapterNumber = from.chapterNumber;
+      into.ordinal = from.ordinal;
+    }
+  }
+  if (from.userFields.includes("number") && !into.userFields.includes("number")) {
+    into.chapterNumber = from.chapterNumber;
+    into.ordinal = from.ordinal;
+  }
+  into.userFields = [...new Set([...into.userFields, ...from.userFields])];
   into.firstOpenedAt = minDefined(into.firstOpenedAt, from.firstOpenedAt);
   into.lastOpenedAt = maxDefined(into.lastOpenedAt, from.lastOpenedAt);
   if (from.completedAt && (!into.completedAt || from.completedAt < into.completedAt)) {
     into.completedAt = from.completedAt;
     into.completionSource = from.completionSource;
   }
-  into.visitCount += from.visitCount;
+  into.visitCount = snapshot ? Math.max(into.visitCount, from.visitCount) : into.visitCount + from.visitCount;
   into.maxProgress = Math.max(into.maxProgress, from.maxProgress);
-  into.readingTimeMs += from.readingTimeMs;
+  into.readingTimeMs = snapshot ? Math.max(into.readingTimeMs, from.readingTimeMs) : into.readingTimeMs + from.readingTimeMs;
+  into.progressRevision = Math.max(into.progressRevision ?? 0, from.progressRevision ?? 0);
+  into.readingPosition = positions[0];
   into.discoveredAt = Math.min(into.discoveredAt, from.discoveredAt);
   if (!into.lastOpenedAt && from.url) into.url = from.url;
 }
@@ -64,23 +86,26 @@ async function moveChaptersTx(t: Tx, fromSourceId: string, to: SeriesSource): Pr
   }
 }
 
-/** Removes a source from a series. Its chapters and progress move to another source of the same series. */
+/** Removes an active source while retaining its chapters, URLs and history. */
 export async function removeSource(sourceId: string): Promise<void> {
   await write(["series", "sources", "chapters", "events"], async (t) => {
     const src = await t.get<SeriesSource>("sources", sourceId);
     if (!src) return;
-    const siblings = (await t.byIndex<SeriesSource>("sources", "seriesId", src.seriesId)).filter((s) => s.id !== sourceId);
+    const siblings = (await t.byIndex<SeriesSource>("sources", "seriesId", src.seriesId)).filter((s) => s.id !== sourceId && !s.removedAt);
     const target = siblings[0];
     if (!target) throw new Error("A series needs at least one source. Remove the series instead.");
-    await moveChaptersTx(t, sourceId, target);
-    await t.delete("sources", sourceId);
-    await refreshSeriesTx(t, src.seriesId);
+    src.removedAt = Date.now();
+    src.disabled = true;
+    await t.put("sources", src);
+    await refreshSeriesTx(t, src.seriesId, (s) => {
+      if (s.preferredSourceId === src.id) s.preferredSourceId = target.id;
+    });
   });
 }
 
 /** Splits one source (with its chapters and their history) into a new, separate series. */
 export async function splitSource(sourceId: string): Promise<string | undefined> {
-  return write(["series", "sources", "chapters", "events"], async (t) => {
+  return write(["series", "sources", "chapters", "events", "meta"], async (t) => {
     const src = await t.get<SeriesSource>("sources", sourceId);
     if (!src) return undefined;
     const original = await getSeriesTx(t, src.seriesId);
@@ -109,6 +134,7 @@ export async function splitSource(sourceId: string): Promise<string | undefined>
       if (!s.keptSeparateFrom.includes(created.id)) s.keptSeparateFrom.push(created.id);
     });
     await refreshSeriesTx(t, created.id);
+    await remapCollectionSeriesTx(t, original.id, created.id, true);
     return created.id;
   });
 }
@@ -151,6 +177,7 @@ export async function mergeSeries(intoId: string, fromId: string): Promise<void>
       await t.put("meta", { key: "queue", value: unique(q) });
     }
 
+    await remapCollectionSeriesTx(t, fromId, intoId);
     await t.delete("series", fromId);
     await refreshSeriesTx(t, intoId, (s) => mergeSeriesFields(s, from));
   });
