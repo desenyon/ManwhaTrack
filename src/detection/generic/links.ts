@@ -32,11 +32,19 @@ export interface LinkScan {
 const NEXT_RE = /\b(?:next|nxt|próximo|proximo|siguiente|suivant|weiter)\b|›|»|→|>>|next[_-]?(?:chap|page|ep)/i;
 const PREV_RE = /\b(?:prev|previous|anterior|précédent|zurück)\b|‹|«|←|<<|prev[_-]?(?:chap|page|ep)/i;
 
-function linkLabel(a: Element, u: URL): string {
+export function linkLabel(a: Element, u: URL): string {
+  const fromUrl = chapterLabelFromUrl(u);
+  // Adjacent spans can concatenate "Chapter 324" and "105. TP" in textContent.
+  // Read a dedicated identity before subtitle/date text, validating against the URL.
+  for (const child of qsa(a, "span, strong, b", 30)) {
+    const label = text(child, 160);
+    if (/^(?:chapter|chap|ch|episode|ep)\.?\s*#?\s*\d+(?:[.,]\d+)?$/i.test(label) &&
+        (!fromUrl || parseChapterLabel(label).number === parseChapterLabel(fromUrl).number)) return label;
+  }
   const t = text(a, 160);
   const parsed = t ? parseChapterLabel(t) : undefined;
+  if (fromUrl && parsed?.kind === "numbered" && parsed.number !== parseChapterLabel(fromUrl).number) return fromUrl;
   if (parsed && parsed.kind !== "special") return parsed.label;
-  const fromUrl = chapterLabelFromUrl(u);
   if (t && t.length <= 80 && !fromUrl) return t;
   return fromUrl ?? t;
 }
