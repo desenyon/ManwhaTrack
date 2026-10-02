@@ -50,7 +50,8 @@ export interface Settings {
   theme: ThemePreference;
   artworkMotion: "system" | "on" | "off";
   layout: LibraryLayout;
-  /** Where Continue opens by default. Modifier/middle-click always opens a new tab. */
+  expandedLayout: LibraryLayout;
+  /** Where other Continue actions open. Resume uses a separate window; modifiers open a tab. */
   continueIn: "current" | "new";
   /** Fraction of the chapter reader that counts as finished. */
   completionThreshold: number;
@@ -84,6 +85,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "system",
   artworkMotion: "system",
   layout: "list",
+  expandedLayout: "grid",
   continueIn: "current",
   completionThreshold: 0.85,
   showTrackingToast: true,
