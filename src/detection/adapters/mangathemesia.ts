@@ -52,7 +52,7 @@ export const mangaThemesiaAdapter: SiteAdapter = {
     const urlLabel = chapterLabelFromUrl(url);
     const m = /\b(?:chapter|ch|episode|ep)\.?\s*\d+(?:\.\d+)?.*$/i.exec(heading);
     const parsed = m ? parseChapterLabel(m[0]) : undefined;
-    const label = parsed && parsed.kind !== "special" ? parsed.label : urlLabel;
+    const label = parsed && parsed.kind !== "special" && (!urlLabel || parsed.number === parseChapterLabel(urlLabel).number) ? parsed.label : urlLabel;
     if (!label) return null;
 
     const allc = qs(doc, ".allc a, .headpost .allc a");
