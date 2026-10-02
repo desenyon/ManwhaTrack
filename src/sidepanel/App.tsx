@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Series } from "../shared/types/models";
 import type { SortKey } from "../shared/types/settings";
 import { SERIES_STATUSES } from "../shared/types/models";
-import { DEFAULT_SORT, findDuplicates, inView, matchesFilters, NO_FILTERS, sortSeries, STATUS_LABEL, type Filters, type ViewId } from "../shared/utils/library";
+import { DEFAULT_SORT, MORE_VIEWS, findDuplicates, inView, matchesFilters, NO_FILTERS, sortSeries, STATUS_LABEL, type Filters, type ViewId } from "../shared/utils/library";
 import { buildSearchEntry, search } from "../shared/utils/search";
 import { displayShortcut, isTypingTarget, matchesShortcut } from "../shared/utils/keys";
 import { sendToWorker } from "../shared/messages";
@@ -16,10 +16,16 @@ import { HomeView } from "./views/HomeView";
 import { SeriesView } from "./views/SeriesView";
 import { InspectorView } from "./views/InspectorView";
 import { HistoryView } from "./views/HistoryView";
+import { TimeView } from "./views/TimeView";
 import { CommandPalette, type Command } from "./components/CommandPalette";
+import { ManualSeriesDialog } from "./components/ManualSeriesDialog";
+import { isSafeHttpUrl } from "../detection/normalization/url";
 import { ShortcutsHelp } from "./components/ShortcutsHelp";
+import { Brand } from "../ui/Brand";
+import { useCollections } from "../ui/useCollections";
+import { CollectionsDialog, CollectionAssignmentDialog } from "./components/Collections";
 
-type Route = { name: "home" } | { name: "series"; id: string } | { name: "inspector" } | { name: "history" };
+type Route = { name: "home" } | { name: "series"; id: string } | { name: "inspector" } | { name: "history" } | { name: "time" };
 
 function readSession<T>(key: string, fallback: T): T {
   try {
@@ -38,14 +44,19 @@ function writeSession(key: string, value: unknown): void {
   }
 }
 
-export function App() {
+export function App({ expanded = false }: { expanded?: boolean }) {
   const lib = useLibrary();
+  const collections = useCollections();
   const [settings, updateSettings] = useSettings();
   useTheme(settings.theme);
+  useEffect(() => { document.documentElement.dataset.artworkMotion = settings.artworkMotion; }, [settings.artworkMotion]);
   const tab = useActiveTab();
-  const actions = useActions(lib, settings, tab.tabId);
+  const actions = useActions(lib, expanded ? { ...settings, continueIn: "new" } : settings, expanded ? undefined : tab.tabId);
 
-  const [route, setRoute] = useState<Route>({ name: "home" });
+  const [route, setRoute] = useState<Route>(() => ({ name: expanded && location.hash === "#time" ? "time" : "home" }));
+  useEffect(() => {
+    if (expanded) history.replaceState(null, "", `${location.pathname}${location.search}${route.name === "time" ? "#time" : ""}`);
+  }, [expanded, route.name]);
   const [view, setViewState] = useState<ViewId>(() => readSession("view", "continue"));
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [query, setQuery] = useState("");
@@ -55,16 +66,39 @@ export function App() {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [palette, setPalette] = useState(false);
+  const [manual, setManual] = useState<{ title?: string; url?: string }>();
   const [help, setHelp] = useState(false);
+  const [manageLists, setManageLists] = useState(false);
+  const [assignLists, setAssignLists] = useState<string[]>();
   const searchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const didDefaultView = useRef(false);
+
+  const openManual = async () => {
+    try {
+      const active = tab.tabId !== undefined ? await chrome.tabs.get(tab.tabId) : undefined;
+      setManual(active?.url && isSafeHttpUrl(active.url) ? { title: active.title, url: active.url } : {});
+    } catch { setManual({}); }
+  };
 
   const setView = (v: ViewId) => {
     setViewState(v);
     writeSession("view", v);
     scrollRef.current?.scrollTo({ top: 0 });
   };
+
+  const openCollection = (id: string) => {
+    setRoute({ name: "home" });
+    setQuery("");
+    setFilters(NO_FILTERS);
+    setView(`collection:${id}`);
+  };
+  const currentCollection = view.startsWith("collection:") ? collections.collections.find(c => c.id === view.slice(11)) : undefined;
+  useEffect(() => {
+    if (collections.loaded && !collections.error && view.startsWith("collection:") && !currentCollection) setView("all");
+  }, [collections.loaded, collections.error, currentCollection, view]);
+  const openExpanded = () => void chrome.tabs.create({ url: chrome.runtime.getURL("library.html") });
+  const openTime = () => { if (expanded) setRoute({ name: "time" }); else void chrome.tabs.create({ url: chrome.runtime.getURL("library.html#time") }); };
 
   // Land on "Continue" when there is something to continue; otherwise show everything.
   useEffect(() => {
@@ -97,14 +131,15 @@ export function App() {
 
   const visible = useMemo(() => {
     const now = Date.now();
+    const memberIds = currentCollection ? new Set(currentCollection.seriesIds) : undefined;
     if (debouncedQuery.trim()) {
       return search(entries, debouncedQuery)
         .map((r) => lib.byId.get(r.id))
-        .filter((s): s is Series => !!s && !s.removedAt && matchesFilters(s, filters, hostsOf, now));
+        .filter((s): s is Series => !!s && !s.removedAt && (!memberIds || memberIds.has(s.id)) && matchesFilters(s, filters, hostsOf, now));
     }
-    const list = lib.series.filter((s) => inView(s, view, now, lib.queue) && matchesFilters(s, filters, hostsOf, now));
+    const list = lib.series.filter((s) => (memberIds ? memberIds.has(s.id) && !s.removedAt : inView(s, view, now, lib.queue)) && matchesFilters(s, filters, hostsOf, now));
     return sortSeries(list, sort, (id) => hostsOf(id)[0] ?? "");
-  }, [debouncedQuery, entries, lib.byId, lib.series, lib.queue, view, filters, hostsOf, sort]);
+  }, [debouncedQuery, entries, lib.byId, lib.series, lib.queue, view, filters, hostsOf, sort, currentCollection]);
 
   const counts = useMemo(() => {
     const now = Date.now();
@@ -135,6 +170,7 @@ export function App() {
         { label: s.favorite ? "Remove favorite" : "Favorite", onSelect: () => void actions.toggleFavorite(s), hint: displayShortcut(settings.shortcuts.favorite) },
         { label: s.pinned ? "Unpin" : "Pin", onSelect: () => void actions.togglePin(s) },
         { label: lib.queue.includes(s.id) ? "Remove from queue" : "Add to queue", onSelect: () => void actions.toggleQueue(s) },
+        { label: "Assign to lists…", onSelect: () => setAssignLists([s.id]) },
         { kind: "label", label: "Status" },
         ...SERIES_STATUSES.map((st) => ({ label: `${st === s.status ? "✓ " : ""}${STATUS_LABEL[st]}`, onSelect: () => void actions.setStatus(s, st) })),
         { kind: "separator" },
@@ -172,13 +208,17 @@ export function App() {
     const top = lib.series.filter((s) => inView(s, "continue")).sort((a, b) => (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0)).slice(0, 3);
     return [
       ...top.map((s) => ({ id: `c:${s.id}`, label: `Continue ${s.title}`, run: () => void actions.continueSeries(s) })),
+      { id: "manual", label: "Track a series manually", run: () => void openManual() },
       { id: "library", label: "Open Library", run: () => { setRoute({ name: "home" }); setView("all"); } },
+      { id: "expanded", label: "Open full library", run: openExpanded },
+      { id: "lists", label: "Create / manage lists", run: () => setManageLists(true) },
       { id: "new", label: "Show New Chapters", run: () => { setRoute({ name: "home" }); setView("new"); } },
       { id: "queue", label: "Show Queue", run: () => { setRoute({ name: "home" }); setView("queue"); } },
       { id: "mark", label: "Mark Current Chapter Read", run: () => tab.tabId !== undefined && void sendToWorker({ type: "tab/mark-current", tabId: tab.tabId, read: true }) },
       { id: "refresh-current", label: "Refresh Current Series", run: () => tabSeries && void actions.checkUpdates([tabSeries.id]) },
       { id: "check-all", label: "Check All Sources for Updates", run: () => void actions.checkUpdates() },
       { id: "history", label: "Reading History", run: () => setRoute({ name: "history" }) },
+      { id: "time", label: "Time tracking", run: openTime },
       { id: "inspect", label: "Detection Inspector", run: () => setRoute({ name: "inspector" }) },
       { id: "select", label: "Select Multiple Series", run: () => setSelecting(true) },
       { id: "export", label: "Export Library", run: () => void chrome.tabs.create({ url: chrome.runtime.getURL("options.html#data") }) },
@@ -186,18 +226,19 @@ export function App() {
       { id: "settings", label: "Open Settings", run: () => void chrome.runtime.openOptionsPage() },
       { id: "shortcuts", label: "Keyboard Shortcuts", run: () => setHelp(true) },
     ];
-  }, [lib.series, actions, tab.tabId, tabSeries]);
+  }, [lib.series, actions, tab.tabId, tabSeries, expanded]);
 
   // ---- keyboard ----
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector("dialog[open]")) return;
       const sc = settings.shortcuts;
       if (matchesShortcut(e, sc.palette)) {
         e.preventDefault();
         setPalette(true);
         return;
       }
-      if (menu || palette || help) return;
+      if (menu || palette || help || document.querySelector("dialog[open]")) return;
       if (matchesShortcut(e, sc.back)) {
         if (isTypingTarget(e.target) && query) {
           setQuery("");
@@ -214,7 +255,7 @@ export function App() {
           if (e.key === "Enter" && visible[0]) void actions.continueSeries(visible[0]);
           else {
             setFocusedId(visible[0]?.id);
-            searchRef.current?.blur();
+            if (visible[0]) scrollIntoView(visible[0].id, scrollRef.current, 0);
           }
         }
         return;
@@ -239,8 +280,8 @@ export function App() {
           scrollIntoView(next.id, scrollRef.current, visible.indexOf(next));
         }
       };
-      if (matchesShortcut(e, sc.next)) return move(1);
-      if (matchesShortcut(e, sc.prev)) return move(idx < 0 ? 1 : -1);
+      if (matchesShortcut(e, sc.next) || e.key === "ArrowDown") return move(1);
+      if (matchesShortcut(e, sc.prev) || e.key === "ArrowUp") return move(idx < 0 ? 1 : -1);
       if (!focusedSeries) return;
       // Let focused buttons and links handle their own Enter/Space.
       const t = e.target as HTMLElement | null;
@@ -263,9 +304,13 @@ export function App() {
       x: r.right - 200,
       y: r.bottom + 4,
       items: [
+        { label: "Track a series manually…", onSelect: () => void openManual() },
+        { label: "Create / manage lists…", onSelect: () => setManageLists(true) },
+        { label: "Open full library", onSelect: openExpanded },
         { label: "Check all sources for updates", onSelect: () => void actions.checkUpdates() },
         { label: selecting ? "Stop selecting" : "Select multiple", onSelect: () => setSelecting(!selecting) },
         { label: "Reading history", onSelect: () => setRoute({ name: "history" }) },
+        { label: "Time tracking", onSelect: openTime },
         { label: "Detection Inspector", onSelect: () => setRoute({ name: "inspector" }) },
         { kind: "separator" },
         { label: "Command palette", hint: displayShortcut(settings.shortcuts.palette), onSelect: () => setPalette(true) },
@@ -277,29 +322,40 @@ export function App() {
   };
 
   return (
-    <div className="app">
-      {route.name === "home" && (
+    <div className={`app${expanded ? " expanded" : ""}`}>
+      {(route.name === "home" || expanded) && (
         <header className="topbar">
-          <span className="brand">ManwhaTrack</span>
-          <div className="search" role="search">
+          <Brand />
+          {route.name === "home" ? <div className="search" role="search">
             <Icon name="search" />
             <input
               ref={searchRef}
               className="input"
               type="search"
-              placeholder="Search library"
+              placeholder={currentCollection ? "Search this list" : "Search library"}
               aria-label="Search library"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
             {!query && <kbd aria-hidden="true">{displayShortcut(settings.shortcuts.search)}</kbd>}
-          </div>
+          </div> : <button className="btn ghost" onClick={() => setRoute({ name: "home" })}>Library</button>}
+          {!expanded && <button className="icon-btn expand-library" aria-label="Expand library" title="Open full library in a tab" onClick={openExpanded}><Icon name="external" /></button>}
           <button className="icon-btn" aria-label="Menu" onClick={(e) => appMenu(e.currentTarget)}>
             <Icon name="more" />
           </button>
         </header>
       )}
-      <main className="scroll" ref={scrollRef}>
+      {expanded && <aside className="library-rail" aria-label="Library navigation">
+        <span className="section-title">Library</span>
+        {[{ id: "continue" as ViewId, label: "Continue" }, { id: "new" as ViewId, label: "New chapters" }, ...MORE_VIEWS].map(v => <button key={v.id} aria-pressed={route.name === "home" && view === v.id} onClick={() => { setRoute({ name: "home" }); setQuery(""); setView(v.id); }}>{v.label}{counts[v.id] ? <span className="count">{counts[v.id]}</span> : null}</button>)}
+        <button aria-pressed={route.name === "time"} onClick={openTime}><Icon name="clock" />Time tracking</button>
+        <div className="rail-heading"><span className="section-title">Your lists</span><button className="icon-btn" aria-label="Create or manage lists" onClick={() => setManageLists(true)}><Icon name="plus" /></button></div>
+        {collections.collections.map(c => <button key={c.id} aria-pressed={route.name === "home" && currentCollection?.id === c.id} onClick={() => openCollection(c.id)}><span className="truncate">{c.name}</span><span className="count">{c.seriesIds.length}</span></button>)}
+        {!collections.collections.length && <p className="small muted">Create lists to organize your library.</p>}
+        <hr className="divider" /><button onClick={() => void chrome.runtime.openOptionsPage()}>Settings & backup</button>
+        <p className="small faint">Stored on this device.<br />No account. No server.</p>
+      </aside>}
+      <main className="scroll" ref={scrollRef} key={route.name === "series" ? route.id : route.name}>
         {route.name === "home" && (
           <HomeView
             lib={lib}
@@ -316,6 +372,13 @@ export function App() {
             visible={visible}
             counts={counts}
             query={debouncedQuery.trim()}
+            collection={currentCollection}
+            collections={collections.collections}
+            collectionsError={collections.error}
+            onReloadCollections={() => void collections.reload()}
+            onOpenCollection={openCollection}
+            onManageLists={() => setManageLists(true)}
+            onOpenTime={openTime}
             focusedId={focusedId}
             setFocusedId={setFocusedId}
             selecting={selecting}
@@ -328,16 +391,21 @@ export function App() {
             onOpenSeries={openSeries}
             onMenu={seriesMenu}
             onInspect={() => setRoute({ name: "inspector" })}
+            onManual={() => void openManual()}
             scrollRef={scrollRef}
           />
         )}
         {route.name === "series" && <SeriesView id={route.id} lib={lib} actions={actions} onBack={() => setRoute({ name: "home" })} onOpenSeries={openSeries} />}
-        {route.name === "inspector" && <InspectorView state={tab.state} series={tabSeries} onBack={() => setRoute({ name: "home" })} onOpenSeries={openSeries} />}
+        {route.name === "inspector" && <InspectorView onManual={() => void openManual()} state={tab.state} series={tabSeries} onBack={() => setRoute({ name: "home" })} onOpenSeries={openSeries} />}
         {route.name === "history" && <HistoryView byId={lib.byId} onBack={() => setRoute({ name: "home" })} onOpenSeries={openSeries} />}
+        {route.name === "time" && <TimeView series={lib.series} onBack={() => setRoute({ name: "home" })} onOpenSeries={openSeries} />}
       </main>
       {menu && <Menu state={menu} onClose={() => setMenu(null)} />}
       {palette && <CommandPalette commands={commands} entries={entries} byId={lib.byId} onContinue={(s) => void actions.continueSeries(s)} onClose={() => setPalette(false)} />}
+      {manual && <ManualSeriesDialog initial={manual} onClose={() => setManual(undefined)} onAdded={async (series) => { await lib.reload(); setManual(undefined); openSeries(series.id); }} />}
       {help && <ShortcutsHelp settings={settings} onClose={() => setHelp(false)} />}
+      {manageLists && <CollectionsDialog onClose={() => setManageLists(false)} onOpen={openCollection} />}
+      {assignLists && <CollectionAssignmentDialog seriesIds={assignLists} onClose={() => setAssignLists(undefined)} />}
     </div>
   );
 }
@@ -346,9 +414,14 @@ function scrollIntoView(id: string, scroller: HTMLElement | null, index: number)
   const el = scroller?.querySelector(`[data-id="${CSS.escape(id)}"]`);
   if (el) {
     el.scrollIntoView({ block: "nearest" });
+    (el as HTMLElement).focus({ preventScroll: true });
     return;
   }
   // Virtualized row not rendered yet: jump near it, then it renders.
   const list = scroller?.querySelector<HTMLElement>(".list");
-  if (scroller && list) scroller.scrollTop = list.offsetTop + index * 68 - scroller.clientHeight / 2;
+  if (scroller && list) {
+    const rowHeight = Number.parseFloat(getComputedStyle(list).getPropertyValue("--row-h"));
+    scroller.scrollTop = list.offsetTop + index * rowHeight - scroller.clientHeight / 2;
+    requestAnimationFrame(() => scroller.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true }));
+  }
 }
