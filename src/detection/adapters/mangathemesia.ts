@@ -42,7 +42,8 @@ export const mangaThemesiaAdapter: SiteAdapter = {
   },
 
   extractChapterList(doc, url) {
-    return chapterLinksFrom(doc, "#chapterlist li a, .eplister li a", url.href, ".chapternum");
+    const list = qs(doc, "#chapterlist") ?? qs(doc, ".seriestucontent .eplister") ?? qs(doc, ".eplister") ?? doc;
+    return chapterLinksFrom(list, "li a", url.href, ".chapternum");
   },
 
   extractChapter(doc, url) {
