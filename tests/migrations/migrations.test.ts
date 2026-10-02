@@ -64,11 +64,33 @@ describe("schema migrations", () => {
     const v1 = await open(name, 1, MIGRATIONS);
     await put(v1, "series", { id: "s1", title: "Keep me" });
     v1.close();
-    await expect(open(name, 3, { ...MIGRATIONS, 3: () => undefined })).rejects.toBeTruthy();
+    await expect(open(name, 3, { 1: MIGRATIONS[1]!, 3: () => undefined })).rejects.toBeTruthy();
     const again = await open(name, 1, MIGRATIONS);
     expect(again.version).toBe(1);
     expect(await getAll(again, "series")).toHaveLength(1);
     again.close();
+  });
+
+  it("upgrades legacy chapter revisions without changing historical progress or sources", async () => {
+    const name = `mig-${crypto.randomUUID()}`;
+    const v1 = await open(name, 1, MIGRATIONS);
+    await put(v1, "chapters", { id: "c1", sourceId: "src", maxProgress: 0.7, readingTimeMs: 123 });
+    await put(v1, "sources", { id: "src", seriesUrl: "https://old.example/series" });
+    v1.close();
+    const upgraded = await open(name, SCHEMA_VERSION, MIGRATIONS);
+    expect(await getAll(upgraded, "chapters")).toEqual([{ id: "c1", sourceId: "src", maxProgress: 0.7, readingTimeMs: 123, progressRevision: 0, associationOverridden: false }]);
+    expect(await getAll(upgraded, "sources")).toEqual([{ id: "src", seriesUrl: "https://old.example/series", removedAt: undefined }]);
+    upgraded.close();
+  });
+
+  it("upgrades version 2 without resetting a manual correction revision", async () => {
+    const name = `mig-${crypto.randomUUID()}`;
+    const v2 = await open(name, 2, MIGRATIONS);
+    await put(v2, "chapters", { id: "c", progressRevision: 7, maxProgress: 0.4 });
+    v2.close();
+    const upgraded = await open(name, SCHEMA_VERSION, MIGRATIONS);
+    expect(await getAll(upgraded, "chapters")).toEqual([{ id: "c", progressRevision: 7, maxProgress: 0.4, associationOverridden: false }]);
+    upgraded.close();
   });
 
   it("repairs records with missing optional fields instead of dropping them", () => {
