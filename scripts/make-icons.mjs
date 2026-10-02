@@ -1,10 +1,10 @@
-// Renders the toolbar icons (a bookmark on a rounded tile) into public/icons as PNGs.
+// Renders the bookmark into public/icons as PNGs. Matches ui/Brand.tsx.
 // Run: node scripts/make-icons.mjs
 import { deflateSync } from "node:zlib";
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const BG = [47, 85, 212];
-const FG = [255, 255, 255];
+const BG = [71, 38, 206];
+const FG = [247, 243, 232];
 
 function crc32(buf) {
   let c;
@@ -57,18 +57,15 @@ function coverage(x, y, inside) {
 }
 
 function tile(px, py, s) {
-  const r = s * 0.22;
+  const r = s * 0.1875;
   const cx = Math.min(Math.max(px, r), s - r);
   const cy = Math.min(Math.max(py, r), s - r);
   return (px - cx) ** 2 + (py - cy) ** 2 <= r * r;
 }
 
 function bookmark(px, py, s) {
-  const l = s * 0.32, rgt = s * 0.68, top = s * 0.2, bot = s * 0.8, notch = s * 0.62;
-  if (px < l || px > rgt || py < top || py > bot) return false;
-  const mid = (l + rgt) / 2;
-  const depth = (bot - notch) * (1 - Math.abs(px - mid) / ((rgt - l) / 2));
-  return py <= bot - depth;
+  const x = px / s * 32, y = py / s * 32;
+  return x >= 10 && x <= 22 && y >= 7 && y <= 22 + Math.abs(x - 16) * 2 / 3;
 }
 
 mkdirSync("public/icons", { recursive: true });
