@@ -1,0 +1,253 @@
+npm notice run manwhatrack@1.0.0 npx
+npm notice run 'vitest' run --config docs/audit/vitest.config.ts
+
+ RUN  v5.0.2 /Users/naitikgupta/Projects/ManwhaTrack
+
+stdout | docs/audit/repros.test.ts > repeated merge import preserves counters
+audit repeated import { visits: 2, readingTimeMs: 20000 }
+
+stdout | docs/audit/repros.test.ts > rediscovery preserves corrected chapter identity
+audit corrected identity [
+  {
+    key: '30',
+    label: 'Chapter 30',
+    url: 'https://example-scans.com/manga/solo-leveling/chapter-31/'
+  },
+  {
+    key: '31',
+    label: 'Chapter 31',
+    url: 'https://example-scans.com/manga/solo-leveling/chapter-31/'
+  }
+]
+
+stdout | docs/audit/repros.test.ts > lowering manual progress does not immediately recomplete chapters
+audit manual rollback { completed: true, progress: 1 }
+
+stdout | docs/audit/repros.test.ts > export contains no dependents of omitted removed series
+audit removed export { series: 0, sources: 1, chapters: 2, history: 1, invalid: 3 }
+
+stdout | docs/audit/repros.test.ts > removing a source does not continue to that source
+audit source removal {
+  hosts: [ 'other.example' ],
+  continueUrl: 'https://example-scans.com/manga/solo-leveling/chapter-31/'
+}
+
+stdout | docs/audit/repros.test.ts > a settings import error does not commit the library
+audit partial import { libraryCommittedDespiteError: true }
+
+stdout | docs/audit/repros.test.ts > progress from incognito is rejected when disabled
+audit incognito progress { progress: 0.2, readingTimeMs: 10000 }
+
+stdout | docs/audit/repros.test.ts > an unrelated redirect does not pollute a tracked series
+audit unrelated redirect { unrelatedChaptersSaved: 1 }
+
+ ❯ docs/audit/repros.test.ts (9 tests | 8 failed) 32ms
+   × repeated merge import preserves counters 11ms
+   × rediscovery preserves corrected chapter identity 3ms
+   × lowering manual progress does not immediately recomplete chapters 3ms
+   × export contains no dependents of omitted removed series 2ms
+   × removing a source does not continue to that source 3ms
+   × a settings import error does not commit the library 3ms
+   × progress from incognito is rejected when disabled 2ms
+   × an unrelated redirect does not pollute a tracked series 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  docs/audit/repros.test.ts > repeated merge import preserves counters
+AssertionError: expected 2 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ docs/audit/repros.test.ts:22:25
+     20|   const ch = (await listChapters(r.seriesId)).find(c => c.id === r.cha…
+     21|   console.log("audit repeated import", { visits: ch.visitCount, readin…
+     22|   expect(ch.visitCount).toBe(1);
+       |                         ^
+     23|   expect(ch.readingTimeMs).toBe(10_000);
+     24| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  docs/audit/repros.test.ts > rediscovery preserves corrected chapter identity
+AssertionError: expected [ { …(21) }, { …(17) } ] to have a length of 1 but got 2
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ docs/audit/repros.test.ts:32:19
+     30|   const records = (await listChapters(r.seriesId)).filter(c => c.url =…
+     31|   console.log("audit corrected identity", records.map(c => ({ key: c.k…
+     32|   expect(records).toHaveLength(1);
+       |                   ^
+     33| });
+     34|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  docs/audit/repros.test.ts > lowering manual progress does not immediately recomplete chapters
+AssertionError: expected 1790905090184 to be undefined
+
+- Expected:
+undefined
+
++ Received:
+1790905090184
+
+ ❯ docs/audit/repros.test.ts:43:25
+     41|   const c = (await listChapters(r.seriesId)).find(c => c.id === r.chap…
+     42|   console.log("audit manual rollback", { completed: !!c.completedAt, p…
+     43|   expect(c.completedAt).toBeUndefined();
+       |                         ^
+     44| });
+     45|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  docs/audit/repros.test.ts > export contains no dependents of omitted removed series
+AssertionError: expected [ { …(14) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ docs/audit/repros.test.ts:52:24
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  docs/audit/repros.test.ts > removing a source does not continue to that source
+AssertionError: expected 'example-scans.com' to be 'other.example' // Object.is equality
+
+Expected: "other.example"
+Received: "example-scans.com"
+
+ ❯ docs/audit/repros.test.ts:72:52
+     70|   const s = (await getSeries(r.seriesId))!;
+     71|   console.log("audit source removal", { hosts: (await listSources(r.se…
+     72|   expect(new URL(s.summary.continueUrl!).hostname).toBe("other.example…
+       |                                                    ^
+     73| });
+     74|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+ FAIL  docs/audit/repros.test.ts > a settings import error does not commit the library
+AssertionError: expected { …(25) } to be undefined
+
+- Expected:
+undefined
+
++ Received:
+{
+  "alternateTitles": [],
+  "currentChapterId": "f72d2ed3-f2c2-4c67-8941-2a2c7266ba8b",
+  "detectedTitle": "Solo Leveling",
+  "discoveredAt": 1790905090191,
+  "favorite": false,
+  "id": "7c4ae1e2-6b68-4db5-95e8-27c742566806",
+  "keptSeparateFrom": [],
+  "lastCompletedChapterId": undefined,
+  "lastOpenedChapterId": "f72d2ed3-f2c2-4c67-8941-2a2c7266ba8b",
+  "lastReadAt": 1790905090191,
+  "normalizedTitle": "solo leveling",
+  "notes": undefined,
+  "personalRating": undefined,
+  "pinned": false,
+  "preferredSourceId": "05a4c28c-ebdd-4339-a303-807082764139",
+  "removedAt": undefined,
+  "sourceIds": [
+    "05a4c28c-ebdd-4339-a303-807082764139",
+  ],
+  "status": "reading",
+  "summary": {
+    "caughtUp": false,
+    "chaptersKnown": 1,
+    "chaptersRead": 0,
+    "continueChapterId": "f72d2ed3-f2c2-4c67-8941-2a2c7266ba8b",
+    "continueKind": "resume",
+    "continueLabel": "Chapter 31",
+    "continueUrl": "https://example-scans.com/manga/solo-leveling/chapter-31/",
+    "currentCompleted": false,
+    "currentLabel": "Chapter 31",
+    "currentOrdinal": 31,
+    "currentProgress": 0,
+    "lastCompletedLabel": undefined,
+    "lastCompletedOrdinal": undefined,
+    "latestKnownLabel": "Chapter 31",
+    "latestKnownOrdinal": 31,
+    "newCount": 0,
+    "newestChapterDiscoveredAt": 1790905090191,
+  },
+  "tags": [],
+  "title": "Solo Leveling",
+  "titleKeys": [
+    "solo leveling",
+  ],
+  "totalReadingTimeMs": 0,
+  "updatedAt": 1790905090193,
+  "userFields": [],
+}
+
+ ❯ docs/audit/repros.test.ts:84:21
+     82|   const committed = await getSeries(file.series[0]!.id);
+     83|   console.log("audit partial import", { libraryCommittedDespiteError: …
+     84|   expect(committed).toBeUndefined();
+       |                     ^
+     85| });
+     86|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯
+
+ FAIL  docs/audit/repros.test.ts > progress from incognito is rejected when disabled
+AssertionError: expected 0.2 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 0.2
+
+ ❯ docs/audit/repros.test.ts:93:25
+     91|   const c = (await listChapters(r.seriesId)).find(c => c.id === r.chap…
+     92|   console.log("audit incognito progress", { progress: c.maxProgress, r…
+     93|   expect(c.maxProgress).toBe(0);
+       |                         ^
+     94|   expect(c.readingTimeMs).toBe(0);
+     95| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/8]⎯
+
+ FAIL  docs/audit/repros.test.ts > an unrelated redirect does not pollute a tracked series
+AssertionError: expected [ { …(17) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ docs/audit/repros.test.ts:107:13
+    105|   const c = (await listChapters(r.seriesId)).filter(c => c.chapterNumb…
+    106|   console.log("audit unrelated redirect", { unrelatedChaptersSaved: c.…
+    107|   expect(c).toHaveLength(0);
+       |             ^
+    108| });
+    109|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/8]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  8 failed | 1 passed (9)
+   Start at  18:38:09
+   Duration  260ms (transform 64%, tests 16%, import 10%, setup 9%, worker 1%)
+
