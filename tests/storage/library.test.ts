@@ -135,13 +135,16 @@ describe("multiple sources and deduplication", () => {
     expect((await getSeries(a!.seriesId))?.sourceIds).toHaveLength(1);
   });
 
-  it("removing a source keeps its progress on the remaining source", async () => {
+  it("removing a source preserves its historical progress and excludes its URLs from Continue", async () => {
     const a = await trackChapterOpened(chapterObs({ title: "Solo Leveling", seriesUrl: SL, label: "Chapter 1", url: slChapter(1), alts: ["Only I Level Up"] }));
     const b = await trackChapterOpened(chapterObs({ title: "Solo Leveling", seriesUrl: OTHER, label: "Chapter 2", url: `${OTHER}chapter-2/`, alts: ["Only I Level Up"] }));
     await completeChapter(b!.chapterId!, "progress");
     await removeSource(b!.sourceId);
     const s = await getSeries(a!.seriesId);
-    expect(s?.sourceIds).toHaveLength(1);
+    expect(s?.sourceIds).toHaveLength(2);
+    expect(await listSources(a!.seriesId)).toHaveLength(1);
+    expect((await listChapters(a!.seriesId)).find((c) => c.id === b!.chapterId)?.sourceId).toBe(b!.sourceId);
+    expect(s?.summary.continueUrl).toBe(SL);
     expect(s?.summary.lastCompletedLabel).toBe("Chapter 2");
   });
 
