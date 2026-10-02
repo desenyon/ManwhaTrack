@@ -23,6 +23,8 @@ const paths: Record<string, ReactElement> = {
   filter: <path d="M2.5 3.5h11L9.5 8.5v4l-3 1.5v-5.5z" />,
   select: <><rect x="2.5" y="2.5" width="11" height="11" rx="2" /><path d="m5.5 8 2 2 3-4" /></>,
   history: <><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9" /><path d="M2.5 2.5v2.5H5" /><path d="M8 5v3l2 1.5" /></>,
+  clock: <><circle cx="8" cy="8" r="5.5" /><path d="M8 4.5V8l2.5 1.5" /></>,
+  pause: <path d="M5.5 4v8M10.5 4v8" />,
   queue: <path d="M2.5 4h8M2.5 8h8M2.5 12h5M12.5 10v4M10.5 12h4" />,
   inspect: <><rect x="2.5" y="2.5" width="11" height="11" rx="2" /><path d="M5 6h6M5 8.5h3.5" /></>,
   plus: <path d="M8 3v10M3 8h10" />,
