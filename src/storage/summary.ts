@@ -16,7 +16,9 @@ export interface SeriesState {
 const ordKey = (o: number) => Math.round(o * 1000);
 
 export function computeSeriesState(series: Series, chapters: Chapter[], sources: SeriesSource[]): SeriesState {
+  sources = sources.filter((s) => !s.removedAt);
   const activeSources = new Set(sources.map((s) => s.id));
+  const activeChapters = chapters.filter((c) => activeSources.has(c.sourceId));
   const preferred = series.preferredSourceId && activeSources.has(series.preferredSourceId) ? series.preferredSourceId : sources[0]?.id;
 
   let lastOpened: Chapter | undefined;
@@ -71,26 +73,31 @@ export function computeSeriesState(series: Series, chapters: Chapter[], sources:
   let continueKind: SeriesSummary["continueKind"] = "none";
   let target: Chapter | undefined;
   if (frontierOrd !== undefined) {
-    target = pickNext(chapters, frontierOrd, preferred);
+    target = pickNext(activeChapters, frontierOrd, preferred);
     if (target) continueKind = target.lastOpenedAt && !target.completedAt ? "resume" : "next";
   }
   let continueUrlOverride: string | undefined;
-  if (!target && frontier?.nextUrl && frontier.id === lastOpened?.id) {
+  if (!target && lastCompleted?.nextUrl && activeSources.has(lastCompleted.sourceId) && lastCompleted.id === lastOpened?.id) {
     // The next chapter's label is unknown, but its URL was seen on the last chapter read.
-    continueUrlOverride = frontier.nextUrl;
+    continueUrlOverride = lastCompleted.nextUrl;
     continueKind = "next";
   }
-  if (!target && !continueUrlOverride && current && !current.completedAt) {
+  if (!target && !continueUrlOverride && current && activeSources.has(current.sourceId) && !current.completedAt) {
     target = current;
     continueKind = "resume";
   }
-  if (!target && !continueUrlOverride && lastOpened && !lastOpened.completedAt) {
+  if (!target && !continueUrlOverride && lastOpened && activeSources.has(lastOpened.sourceId) && !lastOpened.completedAt) {
     target = lastOpened;
     continueKind = "resume";
   }
-  if (!target && !continueUrlOverride && lastOpened) {
+  if (!target && !continueUrlOverride && lastOpened && activeSources.has(lastOpened.sourceId)) {
     target = lastOpened;
     continueKind = "last";
+  }
+  if (!target && !continueUrlOverride && current && !activeSources.has(current.sourceId)) {
+    target = activeChapters.find((c) => c.ordinal !== undefined && c.ordinal === current.ordinal && c.sourceId === preferred)
+      ?? activeChapters.find((c) => c.key === current.key);
+    if (target) continueKind = target.completedAt ? "last" : "resume";
   }
   let continueUrl = target?.url ?? continueUrlOverride;
   if (!continueUrl) {
