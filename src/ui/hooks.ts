@@ -19,6 +19,10 @@ export interface LibraryData {
 /** Loads the whole library from IndexedDB and keeps it fresh via change notifications. */
 export function useLibrary() {
   const [data, setData] = useState<LibraryData>({ series: [], sources: [], queue: [], loaded: false });
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const mutationQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const queueWrites = useRef<Promise<unknown>>(Promise.resolve());
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const reload = useCallback(async () => {
@@ -43,23 +47,47 @@ export function useLibrary() {
    * Optimistic local update: applies `patch` immediately, persists, and rolls back on failure.
    */
   const mutate = useCallback(
-    async (ids: string[], patch: (s: Series) => Series, persist: () => Promise<unknown>): Promise<boolean> => {
-      let before: Series[] = [];
-      setData((d) => {
-        before = d.series;
-        return { ...d, series: d.series.map((s) => (ids.includes(s.id) ? patch(s) : s)) };
-      });
+    (ids: string[], patch: (s: Series) => Series, persist: () => Promise<unknown>): Promise<boolean> => {
+      const operation = async () => {
+        const before = new Map(dataRef.current.series.filter((s) => ids.includes(s.id)).map((s) => [s.id, s]));
+        dataRef.current = { ...dataRef.current, series: dataRef.current.series.map((s) => ids.includes(s.id) ? patch(s) : s) };
+        setData((d) => ({ ...d, series: d.series.map((s) => ids.includes(s.id) ? patch(s) : s) }));
+        try {
+          await persist();
+          publish({ type: "library-changed", seriesIds: ids });
+          return true;
+        } catch {
+          dataRef.current = { ...dataRef.current, series: dataRef.current.series.map((s) => before.get(s.id) ?? s) };
+          setData((d) => ({ ...d, series: d.series.map((s) => before.get(s.id) ?? s) }));
+          return false;
+        }
+      };
+      const pending = mutationQueue.current.then(operation, operation);
+      mutationQueue.current = pending;
+      return pending;
+    }, [],
+  );
+
+  const mutateQueue = useCallback((change: (queue: string[]) => string[], persist: (next: string[]) => Promise<unknown>): Promise<boolean> => {
+    const operation = async () => {
+      const before = [...dataRef.current.queue];
+      const next = change(before);
+      dataRef.current = { ...dataRef.current, queue: next };
+      setData((d) => ({ ...d, queue: next }));
       try {
-        await persist();
-        publish({ type: "library-changed", seriesIds: ids });
+        await persist(next);
+        publish({ type: "library-changed" });
         return true;
       } catch {
-        setData((d) => ({ ...d, series: before }));
+        dataRef.current = { ...dataRef.current, queue: before };
+        setData((d) => ({ ...d, queue: before }));
         return false;
       }
-    },
-    [],
-  );
+    };
+    const pending = queueWrites.current.then(operation, operation);
+    queueWrites.current = pending;
+    return pending;
+  }, []);
 
   const byId = useMemo(() => new Map(data.series.map((s) => [s.id, s])), [data.series]);
   const sourcesBySeries = useMemo(() => {
@@ -68,7 +96,7 @@ export function useLibrary() {
     return m;
   }, [data.sources]);
 
-  return { ...data, byId, sourcesBySeries, reload, mutate, setQueueLocal: (queue: string[]) => setData((d) => ({ ...d, queue })) };
+  return { ...data, byId, sourcesBySeries, reload, mutate, mutateQueue, setQueueLocal: (queue: string[]) => setData((d) => ({ ...d, queue })) };
 }
 
 export function useSettings(): [Settings, (patch: Partial<Settings>) => Promise<void>] {
