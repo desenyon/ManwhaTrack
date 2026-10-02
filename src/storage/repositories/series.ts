@@ -1,3 +1,4 @@
+import { remapCollectionSeriesTx } from "./collections";
 import type { Series, SeriesStatus, SeriesUserField } from "../../shared/types/models";
 import { read, write, type Tx } from "../db";
 import { repairSeries, titleKeysFor } from "../schema";
@@ -169,12 +170,13 @@ export async function purgeSeriesTx(t: Tx, id: string): Promise<void> {
     const keys = await t.keysByIndex(store, "seriesId", id);
     for (const k of keys) await t.delete(store, k);
   }
+  await remapCollectionSeriesTx(t, id);
   await t.delete("series", id);
 }
 
 export async function purgeRemovedSeries(olderThanMs: number): Promise<number> {
   const cutoff = Date.now() - olderThanMs;
-  return write(["series", "sources", "chapters", "events"], async (t) => {
+  return write(["series", "sources", "chapters", "events", "meta"], async (t) => {
     const all = await t.getAll<Series>("series");
     let n = 0;
     for (const s of all) {
@@ -188,7 +190,7 @@ export async function purgeRemovedSeries(olderThanMs: number): Promise<number> {
 }
 
 export async function purgeSeriesNow(ids: string[]): Promise<void> {
-  await write(["series", "sources", "chapters", "events"], async (t) => {
+  await write(["series", "sources", "chapters", "events", "meta"], async (t) => {
     for (const id of ids) await purgeSeriesTx(t, id);
   });
 }
