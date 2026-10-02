@@ -1,7 +1,7 @@
 {
   "name": "manwhatrack",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Local-only Chrome extension that automatically tracks manhwa reading.",
   "keywords": [
     "chrome-extension",
