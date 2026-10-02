@@ -7,6 +7,7 @@ import { percent } from "../../shared/utils/format";
 import { sendToWorker } from "../../shared/messages";
 import { Cover } from "../../ui/Cover";
 import { useToast } from "../../ui/toasts";
+import { shortChapterLabel } from "../../detection/normalization/chapter";
 
 export function NowReading({ state, series, onOpenSeries, onInspect }: { state?: TabState; series?: Series; onOpenSeries: (id: string) => void; onInspect: () => void }) {
   const toast = useToast();
@@ -21,9 +22,10 @@ export function NowReading({ state, series, onOpenSeries, onInspect }: { state?:
         <Cover coverId={series.coverId} title={series.title} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="section-title" style={{ margin: 0 }}>Now reading</div>
-          <div className="truncate" style={{ fontWeight: 600 }}>{series.title}</div>
-          <div className="small muted tabular">
-            {obs.chapter?.label} · {done ? "Read" : `${percent(p)} read`}
+          <div className="now-title truncate">{series.title}</div>
+          <div className="series-progress">
+            {obs.chapter?.label && <span className="meta-card tabular" title={obs.chapter.label}>{shortChapterLabel(obs.chapter.label)}</span>}
+            <span className="meta-card tabular">{done ? "Read" : `${percent(p)} read`}</span>
           </div>
           <div className="progress" aria-hidden="true"><i style={{ width: percent(done ? 1 : p) }} /></div>
         </div>
