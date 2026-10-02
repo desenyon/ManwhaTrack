@@ -21,8 +21,9 @@ export function useActions(lib: Lib, settings: Settings, activeTabId: number | u
 
   const continueSeries = useCallback(
     async (s: Series, opts: { newTab?: boolean; url?: string } = {}) => {
-      const newTab = opts.newTab ?? settings.continueIn === "new";
-      const res = await sendToWorker<{ ok: boolean; error?: string }>({ type: "continue/open", seriesId: s.id, newTab, tabId: newTab ? undefined : activeTabId, url: opts.url });
+      const newWindow = opts.newTab === undefined && !opts.url && s.summary.continueKind === "resume";
+      const newTab = !newWindow && (opts.newTab ?? settings.continueIn === "new");
+      const res = await sendToWorker<{ ok: boolean; error?: string }>({ type: "continue/open", seriesId: s.id, newTab, newWindow, tabId: newTab ? undefined : activeTabId, url: opts.url });
       if (!res?.ok) toast.show(res?.error ?? "Could not open this series.", { error: true });
     },
     [settings.continueIn, activeTabId, toast],
