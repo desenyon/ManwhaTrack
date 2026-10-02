@@ -34,6 +34,7 @@ export function repairSettings(raw: unknown): Settings {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<Settings>;
   const s: Settings = { ...DEFAULT_SETTINGS, ...r };
   if (!["system", "light", "dark"].includes(s.theme)) s.theme = "system";
+  if (!["system", "on", "off"].includes(s.artworkMotion)) s.artworkMotion = "system";
   if (!["list", "grid"].includes(s.layout)) s.layout = "list";
   if (!["current", "new"].includes(s.continueIn)) s.continueIn = "current";
   if (!["off", "favorites", "all"].includes(s.notifications)) s.notifications = "off";
