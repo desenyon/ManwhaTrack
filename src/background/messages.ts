@@ -10,11 +10,14 @@ import {
   type TabState,
 } from "../shared/messages";
 import { CONFIDENCE, type PageObservation } from "../detection/types";
-import { hostMatches, isSafeHttpUrl } from "../detection/normalization/url";
+import { canonicalizeUrl, hostMatches, isSafeHttpUrl } from "../detection/normalization/url";
 import { completeChapter, markSourceFailing, recordProgress, trackChapterOpened, trackSeriesPage, type TrackResult } from "../storage/tracking";
+import { read, revokeDisallowedWrites } from "../storage/db";
+import type { Settings } from "../shared/types/settings";
+import type { Chapter } from "../shared/types/models";
 import { getSeries, purgeSeriesNow, removeSeries } from "../storage/repositories/series";
 import { markChapters } from "../storage/repositories/chapters";
-import { getSettings } from "../storage/repositories/settings";
+import { getSettings, repairSettings } from "../storage/repositories/settings";
 import { publish } from "../shared/bus";
 import { expectNavigation, getTabState, patchTabState, setTabState, takeExpectation } from "./tabs";
 import { cacheDetectedCover, refreshCover } from "./covers";
@@ -23,8 +26,40 @@ import { refreshBadge } from "./badge";
 import { updateMenusForTab } from "./menus";
 import { registerNotificationListeners } from "./notifications";
 import { debug, warn } from "./log";
+import { expectResume, takeResume } from "./resume";
 
 type Sender = chrome.runtime.MessageSender;
+
+// Chrome preferences and IndexedDB cannot share a transaction. The listener gives
+// in-flight IDB writes a synchronous fence when Chrome delivers a revocation.
+let policyStorage: typeof chrome.storage | undefined;
+let policyEpoch = 0;
+let latestPolicy: Settings | undefined;
+function watchPolicy(): void {
+  if (policyStorage === chrome.storage) return;
+  policyStorage = chrome.storage;
+  latestPolicy = undefined;
+  policyEpoch++;
+  chrome.storage.onChanged?.addListener((changes, area) => {
+    if (area === "local" && changes.settings) {
+      latestPolicy = repairSettings(changes.settings.newValue);
+      policyEpoch++;
+      revokeDisallowedWrites();
+    }
+  });
+}
+function permits(settings: Settings, host: string, sender: Sender): boolean {
+  return !(sender.tab?.incognito && !settings.trackIncognito) && !settings.ignoredHosts.some(h => hostMatches(host, h));
+}
+async function authorize(host: string, sender: Sender): Promise<{ settings: Settings; shouldWrite: () => boolean } | undefined> {
+  watchPolicy();
+  const before = policyEpoch;
+  const stored = await getSettings();
+  const settings = policyEpoch !== before && latestPolicy ? latestPolicy : stored;
+  if (!permits(settings, host, sender)) return;
+  const epoch = policyEpoch;
+  return { settings, shouldWrite: () => permits(policyEpoch !== epoch && latestPolicy ? latestPolicy : settings, host, sender) };
+}
 
 async function isActiveTab(tabId: number): Promise<boolean> {
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -32,34 +67,40 @@ async function isActiveTab(tabId: number): Promise<boolean> {
 }
 
 /** Persists an observation. `force` tracks medium-confidence pages the user explicitly asked for. */
-export async function persistObservation(obs: PageObservation, force = false): Promise<TrackResult | null> {
+export async function persistObservation(obs: PageObservation, force = false, shouldWrite?: () => boolean): Promise<TrackResult | null> {
   if (!force && obs.confidence < CONFIDENCE.track) return null;
-  if (obs.kind === "chapter" && obs.chapter && obs.series) return trackChapterOpened(obs);
-  if ((obs.kind === "series" || force) && obs.series) return trackSeriesPage({ ...obs, kind: "series" });
+  if (obs.kind === "chapter" && obs.chapter && obs.series) return trackChapterOpened(obs, { shouldWrite });
+  if ((obs.kind === "series" || force) && obs.series) return trackSeriesPage({ ...obs, kind: "series" }, Date.now(), shouldWrite);
   return null;
 }
 
 async function onObserved(msg: PageObservedMessage, sender: Sender): Promise<ObservedResponse> {
   const tab = sender.tab;
-  if (!tab?.id || sender.frameId) return {};
-  const settings = await getSettings();
-  if (tab.incognito && !settings.trackIncognito) return {};
+  if (tab?.id === undefined || sender.frameId) return { ok: true };
   const obs = sanitizeObservation(msg.observation);
-  if (!obs) return {};
-  if (settings.ignoredHosts.some((h) => hostMatches(obs.hostname, h))) return {};
+  if (!obs) return { ok: true };
+  if (!(await authorize(obs.hostname, sender))) return { ok: true };
+  const senderUrl = sender.url ?? tab.url;
+  if (senderUrl && (!isSafeHttpUrl(senderUrl) || new URL(senderUrl).origin !== new URL(obs.url).origin)) return { ok: true };
 
   const expectation = await takeExpectation(tab.id);
+  const permission = await authorize(obs.hostname, sender);
+  if (!permission) return { ok: true };
+  const settings = permission.settings;
   if (msg.errorPage && expectation?.sourceId) {
-    await markSourceFailing(expectation.sourceId, "The saved page could not be found. The series may have moved.");
+    await markSourceFailing(expectation.sourceId, "The saved page could not be found. The series may have moved.", permission.shouldWrite);
   }
 
   const state: TabState = { tabId: tab.id, observation: obs, errorPage: msg.errorPage, updatedAt: Date.now() };
   let result: TrackResult | null = null;
   try {
-    result = await persistObservation(obs);
+    result = await persistObservation(obs, false, permission.shouldWrite);
   } catch (err) {
     warn("tracking", err);
+    return { ok: false };
   }
+
+  if (!permission.shouldWrite()) return { ok: true };
 
   if (result) {
     state.seriesId = result.seriesId;
@@ -74,12 +115,15 @@ async function onObserved(msg: PageObservedMessage, sender: Sender): Promise<Obs
   if (result) void refreshBadge();
 
   return {
+    ok: true,
     tracked: result
       ? {
           seriesId: result.seriesId,
           seriesTitle: result.seriesTitle,
           chapterId: result.chapterId,
           chapterLabel: result.chapterLabel,
+          progressRevision: result.chapterProgressRevision,
+          progress: result.chapterProgress,
           created: result.created,
           restored: result.restored,
         }
@@ -89,10 +133,22 @@ async function onObserved(msg: PageObservedMessage, sender: Sender): Promise<Obs
   };
 }
 
-async function openUrl(url: string, newTab: boolean, tabId?: number): Promise<number | undefined> {
-  if (newTab) return (await chrome.tabs.create({ url, active: true })).id;
-  if (tabId !== undefined) return (await chrome.tabs.update(tabId, { url }))?.id;
-  return (await chrome.tabs.update({ url }))?.id;
+async function automaticChapter(chapterId: string, sender: Sender): Promise<{ chapter: Chapter; settings: Settings; shouldWrite: () => boolean } | undefined> {
+  const tab = sender.tab;
+  if (tab?.id === undefined || sender.frameId) return;
+  watchPolicy();
+  const settings = await getSettings();
+  if (tab.incognito && !settings.trackIncognito) return;
+  const state = await getTabState(tab.id);
+  if (!state || state.chapterId !== chapterId) return;
+  const host = new URL(state.observation.url).hostname;
+  if (settings.ignoredHosts.some(h => hostMatches(host, h))) return;
+  const senderUrl = sender.url ?? tab.url;
+  if (senderUrl && (!isSafeHttpUrl(senderUrl) || canonicalizeUrl(senderUrl) !== canonicalizeUrl(state.observation.url))) return;
+  const chapter = await read(["chapters"], t => t.get<Chapter>("chapters", chapterId));
+  if (!chapter || chapter.seriesId !== state.seriesId) return;
+  const permission = await authorize(host, sender);
+  return permission ? { chapter, ...permission } : undefined;
 }
 
 export async function handleMessage(msg: ExtensionMessage, sender: Sender): Promise<unknown> {
@@ -100,15 +156,29 @@ export async function handleMessage(msg: ExtensionMessage, sender: Sender): Prom
     case "page/observed":
       return onObserved(msg, sender);
 
+    case "chapter/activity": {
+      if (typeof msg.chapterId !== "string" || typeof msg.active !== "boolean" || !Number.isFinite(msg.sessionMs) || msg.sessionMs < 0 || msg.sessionMs > 86_400_000) return { ok: false };
+      const permission = await automaticChapter(msg.chapterId, sender);
+      if (!permission?.shouldWrite() || sender.tab?.id === undefined) return { ok: false };
+      await patchTabState(sender.tab.id, { readingActivity: { active: msg.active, sessionMs: msg.sessionMs, sampledAt: Date.now(), chapterId: msg.chapterId } });
+      return { ok: true };
+    }
+
     case "chapter/progress": {
       if (!isProgressMessage(msg)) return { completed: false };
-      const settings = await getSettings();
+      const permission = await automaticChapter(msg.chapterId, sender);
+      if (!permission) return { completed: false, blocked: true };
+      const settings = permission.settings;
       const res = await recordProgress(msg.chapterId, {
         progress: msg.progress,
         readingTimeDeltaMs: msg.readingTimeDeltaMs,
         threshold: settings.completionThreshold,
         final: msg.final,
+        readingPosition: msg.readingPosition,
+        progressRevision: msg.progressRevision,
+        shouldWrite: permission.shouldWrite,
       });
+      if (res.blocked || res.positionOnly) return res;
       if (sender.tab?.id) {
         await patchTabState(sender.tab.id, { progress: res.progress });
         publish({ type: "tab-state-changed", tabId: sender.tab.id });
@@ -119,9 +189,25 @@ export async function handleMessage(msg: ExtensionMessage, sender: Sender): Prom
       return res;
     }
 
+    case "chapter/state": {
+      const permission = await automaticChapter(msg.chapterId, sender);
+      const c = permission?.shouldWrite() ? permission.chapter : undefined;
+      return c ? { progress: c.maxProgress, progressRevision: c.progressRevision ?? 0 } : { blocked: true };
+    }
+
+    case "chapter/resume-position": {
+      if (typeof msg.chapterId !== "string" || !Number.isInteger(msg.progressRevision) || msg.progressRevision < 0) return {};
+      const permission = await automaticChapter(msg.chapterId, sender);
+      if (!permission?.shouldWrite() || sender.tab?.id === undefined) return {};
+      const url = sender.url ?? sender.tab.url;
+      return { position: url ? await takeResume(sender.tab.id, permission.chapter, url, msg.progressRevision) : undefined };
+    }
+
     case "chapter/next-clicked": {
       if (typeof msg.chapterId !== "string") return { ok: false };
-      const done = await completeChapter(msg.chapterId, "next-link");
+      const permission = await automaticChapter(msg.chapterId, sender);
+      if (!permission) return { ok: false };
+      const done = await completeChapter(msg.chapterId, "next-link", Date.now(), msg.progressRevision, permission.shouldWrite);
       if (done) publish({ type: "library-changed" });
       return { ok: done };
     }
@@ -138,11 +224,19 @@ export async function handleMessage(msg: ExtensionMessage, sender: Sender): Prom
     }
 
     case "continue/open": {
+      if (sender.url && !sender.url.startsWith(chrome.runtime.getURL(""))) return { ok: false };
       const s = await getSeries(msg.seriesId);
       const url = msg.url ?? s?.summary.continueUrl;
       if (!s || !url || !isSafeHttpUrl(url)) return { ok: false, error: "No reading destination is known for this series." };
-      const tabId = await openUrl(url, msg.newTab, msg.tabId);
-      if (tabId !== undefined) await expectNavigation(tabId, { seriesId: s.id, sourceId: s.preferredSourceId, url, at: Date.now() });
+      // Register the private intent before the new content script can detect its page.
+      const tabId = msg.newTab ? (await chrome.tabs.create({ url: "about:blank", active: true })).id :
+        msg.tabId ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
+      if (tabId === undefined) return { ok: false, error: "Could not find a browser tab." };
+      const resume = msg.resume ?? (!msg.url && s.summary.continueKind === "resume");
+      const chapter = resume ? await read(["chapters"], t => t.firstByIndex<Chapter>("chapters", "canonicalUrl", canonicalizeUrl(url))) : undefined;
+      await expectResume(tabId, chapter?.seriesId === s.id ? chapter : undefined, url);
+      await expectNavigation(tabId, { seriesId: s.id, sourceId: chapter?.sourceId ?? s.preferredSourceId, url, at: Date.now() });
+      await chrome.tabs.update(tabId, { url });
       return { ok: true };
     }
 
