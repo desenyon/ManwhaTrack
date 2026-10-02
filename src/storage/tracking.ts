@@ -1,12 +1,12 @@
 // The tracking layer: decides what to persist from detection observations.
 // Adapters/detectors only observe; this module is the single writer for automatic tracking.
 
-import type { Chapter, CompletionSource, CoverAsset, Series, SeriesSource } from "../shared/types/models";
+import type { Chapter, CompletionSource, CoverAsset, ReadingPosition, Series, SeriesSource } from "../shared/types/models";
 import type { DetectedChapterLink, DetectedSeries, PageObservation } from "../detection/types";
-import { write, type Tx } from "./db";
+import { WriteRevokedError, write, type Tx } from "./db";
 import { createChapter, createSeries, createSource, titleKeysFor } from "./schema";
 import { getSeriesTx, putSeriesTx, refreshSeriesTx } from "./repositories/series";
-import { addEventTx } from "./repositories/chapters";
+import { addEventTx, updateReadingPosition } from "./repositories/chapters";
 import { chapterLabelFromUrl, parseChapterLabel } from "../detection/normalization/chapter";
 import { canonicalizeUrl, isSafeHttpUrl, sourceHost, toUrl } from "../detection/normalization/url";
 import { normalizeTitle } from "../detection/normalization/title";
@@ -22,6 +22,8 @@ export interface TrackResult {
   seriesTitle: string;
   chapterId?: string;
   chapterLabel?: string;
+  chapterProgressRevision?: number;
+  chapterProgress?: number;
   created: boolean;
   restored: boolean;
   /** Cover the caller should download and cache (outside the DB transaction). */
@@ -157,7 +159,9 @@ export async function upsertChapterListTx(
     const parsed = parseChapterLabel(link.label || chapterLabelFromUrl(new URL(link.url)) || "");
     if (!parsed.label || seen.has(parsed.key)) continue;
     seen.add(parsed.key);
-    const existing = await t.firstByIndex<Chapter>("chapters", "sourceKey", [source.id, parsed.key]);
+    const urlMatches = await t.byIndex<Chapter>("chapters", "canonicalUrl", canonicalizeUrl(link.url));
+    if (urlMatches.some(c => c.associationOverridden)) continue;
+    const existing = urlMatches.find((c) => c.sourceId === source.id) ?? await t.firstByIndex<Chapter>("chapters", "sourceKey", [source.id, parsed.key]);
     if (existing) {
       const canon = canonicalizeUrl(link.url);
       let changed = false;
@@ -191,7 +195,7 @@ export async function upsertChapterListTx(
 
 // ---------------------------------------------------------------- series pages
 
-export async function trackSeriesPage(obs: PageObservation, now = Date.now()): Promise<TrackResult | null> {
+export async function trackSeriesPage(obs: PageObservation, now = Date.now(), shouldWrite?: () => boolean): Promise<TrackResult | null> {
   const detected = obs.series;
   if (!detected || !isSafeHttpUrl(detected.seriesUrl)) return null;
   return write([...TRACK_STORES, "covers"], async (t) => {
@@ -202,7 +206,7 @@ export async function trackSeriesPage(obs: PageObservation, now = Date.now()): P
     await t.put("sources", r.source);
     const s = await refreshSeriesTx(t, r.series.id);
     return result(r, s ?? r.series, await coverToFetchTx(t, s ?? r.series, detected));
-  });
+  }, shouldWrite).catch(err => { if (err instanceof WriteRevokedError) return null; throw err; });
 }
 
 async function coverToFetchTx(t: Tx, series: Series, detected: DetectedSeries): Promise<string | undefined> {
@@ -222,6 +226,8 @@ function result(r: Resolved, s: Series, coverUrl?: string, chapter?: Chapter): T
     seriesTitle: s.title,
     chapterId: chapter?.id,
     chapterLabel: chapter?.chapterLabel,
+    chapterProgressRevision: chapter ? chapter.progressRevision ?? 0 : undefined,
+    chapterProgress: chapter?.maxProgress,
     created: r.created,
     restored: r.restored,
     coverUrl,
@@ -233,8 +239,10 @@ function result(r: Resolved, s: Series, coverUrl?: string, chapter?: Chapter): T
 
 export interface OpenOptions {
   now?: number;
+  shouldWrite?: () => boolean;
   /** Chapter the user left by clicking its detected "next chapter" link. */
   completedViaNext?: string;
+  completedViaNextRevision?: number;
 }
 
 export async function trackChapterOpened(obs: PageObservation, opts: OpenOptions = {}): Promise<TrackResult | null> {
@@ -244,15 +252,22 @@ export async function trackChapterOpened(obs: PageObservation, opts: OpenOptions
   const now = opts.now ?? Date.now();
 
   return write([...TRACK_STORES], async (t) => {
-    if (opts.completedViaNext) await completeTx(t, opts.completedViaNext, "next-link", now);
+    if (opts.completedViaNext) await completeTx(t, opts.completedViaNext, "next-link", now, opts.completedViaNextRevision);
 
-    const r = await resolveTx(t, detected, false, now);
-    applyDetectedMetadata(r.series, r.source, detected, false, obs.adapterId, now);
+    const owned = (await t.byIndex<Chapter>("chapters", "canonicalUrl", ch.canonicalUrl)).find(c => c.associationOverridden);
+    const ownedSeries = owned ? await getSeriesTx(t, owned.seriesId) : undefined;
+    const ownedSource = owned ? await t.get<SeriesSource>("sources", owned.sourceId) : undefined;
+    const restoredOwned = !!ownedSeries?.removedAt;
+    if (ownedSeries) ownedSeries.removedAt = undefined;
+    const r: Resolved = ownedSeries && ownedSource
+      ? { series: ownedSeries, source: ownedSource, created: false, restored: restoredOwned }
+      : await resolveTx(t, detected, false, now);
+    if (!owned) applyDetectedMetadata(r.series, r.source, detected, false, obs.adapterId, now);
 
     const parsed = parseChapterLabel(ch.label);
     let chapter =
-      (await t.firstByIndex<Chapter>("chapters", "sourceKey", [r.source.id, parsed.key])) ??
-      (await t.byIndex<Chapter>("chapters", "canonicalUrl", ch.canonicalUrl)).find((c) => c.sourceId === r.source.id);
+      (await t.byIndex<Chapter>("chapters", "canonicalUrl", ch.canonicalUrl)).find((c) => c.sourceId === r.source.id) ??
+      (await t.firstByIndex<Chapter>("chapters", "sourceKey", [r.source.id, parsed.key]));
     if (!chapter) chapter = createChapter({ seriesId: r.series.id, sourceId: r.source.id, label: ch.label, url: ch.url, now });
 
     // A chapter first learned from a link or list gets the site's own label once opened.
@@ -293,14 +308,14 @@ export async function trackChapterOpened(obs: PageObservation, opts: OpenOptions
     const s = await refreshSeriesTx(t, r.series.id);
     // Chapter pages rarely name a cover; use their share image only until the series page is seen.
     const fallback = detected.coverUrl ?? detected.coverCandidates[0];
-    const cover = !s?.detectedCoverId && fallback && isSafeHttpUrl(fallback) ? fallback : undefined;
+    const cover = !owned && !s?.detectedCoverId && fallback && isSafeHttpUrl(fallback) ? fallback : undefined;
     return result(r, s ?? r.series, cover, chapter);
-  });
+  }, opts.shouldWrite).catch(err => { if (err instanceof WriteRevokedError) return null; throw err; });
 }
 
-async function completeTx(t: Tx, chapterId: string, source: CompletionSource, now: number): Promise<boolean> {
+async function completeTx(t: Tx, chapterId: string, source: CompletionSource, now: number, progressRevision?: number): Promise<boolean> {
   const c = await t.get<Chapter>("chapters", chapterId);
-  if (!c || c.completedAt) return false;
+  if (!c || c.completedAt || (progressRevision ?? 0) !== (c.progressRevision ?? 0)) return false;
   c.completedAt = now;
   c.completionSource = source;
   c.maxProgress = Math.max(c.maxProgress, source === "next-link" ? c.maxProgress : 1);
@@ -311,11 +326,14 @@ async function completeTx(t: Tx, chapterId: string, source: CompletionSource, no
   return true;
 }
 
-export async function completeChapter(chapterId: string, source: CompletionSource, now = Date.now()): Promise<boolean> {
-  return write([...TRACK_STORES], (t) => completeTx(t, chapterId, source, now));
+export async function completeChapter(chapterId: string, source: CompletionSource, now = Date.now(), progressRevision?: number, shouldWrite?: () => boolean): Promise<boolean> {
+  return write([...TRACK_STORES], (t) => completeTx(t, chapterId, source, now, progressRevision), shouldWrite).catch(err => { if (err instanceof WriteRevokedError) return false; throw err; });
 }
 
 export interface ProgressUpdate {
+  readingPosition?: ReadingPosition;
+  shouldWrite?: () => boolean;
+  progressRevision?: number;
   progress: number;
   readingTimeDeltaMs: number;
   threshold: number;
@@ -323,26 +341,30 @@ export interface ProgressUpdate {
   final?: boolean;
 }
 
-export async function recordProgress(chapterId: string, u: ProgressUpdate, now = Date.now()): Promise<{ completed: boolean; progress: number }> {
+export async function recordProgress(chapterId: string, u: ProgressUpdate, now = Date.now()): Promise<{ completed: boolean; progress: number; progressRevision?: number; stale?: boolean; blocked?: boolean; positionOnly?: boolean }> {
   return write([...TRACK_STORES], async (t) => {
     const c = await t.get<Chapter>("chapters", chapterId);
     if (!c) return { completed: false, progress: 0 };
+    if ((u.progressRevision ?? 0) !== (c.progressRevision ?? 0)) return { completed: false, progress: c.maxProgress, progressRevision: c.progressRevision ?? 0, stale: true };
     const p = Math.max(0, Math.min(1, Number.isFinite(u.progress) ? u.progress : 0));
     const delta = Math.max(0, Math.min(MAX_PROGRESS_DELTA_MS, u.readingTimeDeltaMs || 0));
+    const positionOnly = p <= c.maxProgress && delta === 0 && !u.final && !!u.readingPosition && (!!c.completedAt || c.maxProgress < u.threshold);
     c.maxProgress = Math.max(c.maxProgress, p);
     c.readingTimeMs += delta;
+    updateReadingPosition(c, u.readingPosition, now);
     await t.put("chapters", c);
+    if (positionOnly) return { completed: false, progress: c.maxProgress, progressRevision: c.progressRevision ?? 0, positionOnly: true };
     let completed = false;
     if (!c.completedAt && c.maxProgress >= u.threshold) {
-      completed = await completeTx(t, c.id, "progress", now);
+      completed = await completeTx(t, c.id, "progress", now, u.progressRevision);
     } else {
       if (u.final && !c.completedAt && c.maxProgress >= 0.05) {
         await addEventTx(t, { seriesId: c.seriesId, chapterId: c.id, type: "progress", timestamp: now, progress: c.maxProgress, chapterLabel: c.chapterLabel });
       }
       await refreshSeriesTx(t, c.seriesId);
     }
-    return { completed, progress: c.maxProgress };
-  });
+    return { completed, progress: c.maxProgress, progressRevision: c.progressRevision ?? 0 };
+  }, u.shouldWrite).catch(err => { if (err instanceof WriteRevokedError) return { completed: false, progress: 0, blocked: true }; throw err; });
 }
 
 // ---------------------------------------------------------------- update checks
@@ -354,7 +376,7 @@ export type UpdateCheckOutcome =
 export async function applyUpdateCheck(sourceId: string, outcome: UpdateCheckOutcome, now = Date.now()): Promise<{ series?: Series; newChapters: Chapter[] }> {
   return write([...TRACK_STORES], async (t) => {
     const source = await t.get<SeriesSource>("sources", sourceId);
-    if (!source) return { newChapters: [] };
+    if (!source || source.removedAt) return { newChapters: [] };
     source.lastCheckedAt = now;
     if (!outcome.ok) {
       source.consecutiveFailures = (source.consecutiveFailures ?? 0) + 1;
@@ -365,9 +387,17 @@ export async function applyUpdateCheck(sourceId: string, outcome: UpdateCheckOut
     const series = await getSeriesTx(t, source.seriesId);
     if (!series) return { newChapters: [] };
 
+    const changedUrl = outcome.finalUrl !== undefined && (!isSafeHttpUrl(outcome.finalUrl) || canonicalizeUrl(outcome.finalUrl) !== source.canonicalSeriesUrl);
+    const sameTitle = !!outcome.title && [...series.titleKeys, normalizeTitle(source.sourceTitle ?? ""), normalizeTitle(series.detectedTitle ?? "")].includes(normalizeTitle(outcome.title));
+    if ((outcome.title && !sameTitle) || (changedUrl && (!sameTitle || !isSafeHttpUrl(outcome.finalUrl!) || sourceHost(outcome.finalUrl!) !== source.hostname))) {
+      source.consecutiveFailures = (source.consecutiveFailures ?? 0) + 1;
+      source.lastError = "Update page does not match the tracked series.";
+      await t.put("sources", source);
+      return { newChapters: [] };
+    }
+
     // The page redirected: accept the new location only if it is still clearly this series.
     if (outcome.finalUrl && isSafeHttpUrl(outcome.finalUrl) && canonicalizeUrl(outcome.finalUrl) !== source.canonicalSeriesUrl) {
-      const sameTitle = outcome.title && series.titleKeys.includes(normalizeTitle(outcome.title));
       if (sameTitle && sourceHost(outcome.finalUrl) === source.hostname) {
         relocateSource(source, { title: outcome.title!, alternateTitles: [], seriesUrl: outcome.finalUrl, canonicalSeriesUrl: canonicalizeUrl(outcome.finalUrl), coverCandidates: [], chapterList: [] });
       }
@@ -386,7 +416,7 @@ export async function applyUpdateCheck(sourceId: string, outcome: UpdateCheckOut
 }
 
 /** Records that a saved URL led to an error page, without deleting anything. */
-export async function markSourceFailing(sourceId: string, error: string): Promise<void> {
+export async function markSourceFailing(sourceId: string, error: string, shouldWrite?: () => boolean): Promise<void> {
   await write(["sources"], async (t) => {
     const s = await t.get<SeriesSource>("sources", sourceId);
     if (!s) return;
@@ -394,5 +424,5 @@ export async function markSourceFailing(sourceId: string, error: string): Promis
     s.lastError = error;
     s.lastCheckedAt = Date.now();
     await t.put("sources", s);
-  });
+  }, shouldWrite).catch(err => { if (!(err instanceof WriteRevokedError)) throw err; });
 }
