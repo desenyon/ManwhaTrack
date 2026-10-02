@@ -2,7 +2,7 @@
 //   SCREENSHOT_DIR=docs/screenshots npm run test:e2e -- screenshots
 // Two fictional sites (inkwell.example, toonhaven.example) are mapped to a local fixture server.
 
-import { test, chromium, type BrowserContext, type Page } from "@playwright/test";
+import { expect, test, chromium, type BrowserContext, type Page } from "@playwright/test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,7 +85,7 @@ test("README screenshots", async () => {
     await panel.setViewportSize({ width: 380, height: 820 });
     await panel.goto(`${ext}/sidepanel.html`);
     await panel.waitForTimeout(800);
-    await panel.locator(".tab", { hasText: "All" }).click();
+    await panel.getByLabel("Lists and library views").selectOption("all");
     await menuAction(panel, "Bloom in Winter", "Favorite");
     await menuAction(panel, "The Last Swordmaster", "Favorite");
     await menuAction(panel, "Tower of the Mage King", "Pin");
@@ -102,7 +102,7 @@ test("README screenshots", async () => {
     await panel.locator(".tab", { hasText: "Continue" }).click();
     await shot(panel, "library-light", "light");
     await shot(panel, "library-dark", "dark");
-    await panel.locator(".tab", { hasText: "All" }).click();
+    await panel.getByLabel("Lists and library views").selectOption("all");
     await panel.locator('button[aria-label="Show as grid"]').click();
     await shot(panel, "grid-dark", "dark");
     await panel.locator('button[aria-label="Show as list"]').click();
@@ -117,8 +117,41 @@ test("README screenshots", async () => {
     // Command palette.
     await panel.keyboard.press("ControlOrMeta+k");
     await panel.keyboard.type("star");
+    await expect(panel.getByRole("option", { name: /Continue Starfall Academy/ })).toHaveCount(1);
     await shot(panel, "palette-dark", "dark");
     await panel.keyboard.press("Escape");
+
+    // The other utility views share the same narrow layout and tokens.
+    const bounds = async (page: Page) => {
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      const footer = page.locator(".colophon");
+      if (await footer.count()) expect(await footer.evaluate(el => el.querySelector("img")!.getBoundingClientRect().top >= el.querySelector("p")!.getBoundingClientRect().bottom)).toBe(true);
+    };
+    await menuAction(panel, "The Last Swordmaster", "Add to queue");
+    await menuAction(panel, "Starfall Academy", "Add to queue");
+    await panel.waitForTimeout(3600);
+    await panel.getByLabel("Lists and library views").selectOption("queue");
+    for (const scheme of ["light", "dark"] as const) {
+      await panel.setViewportSize({ width: 280, height: 820 });
+      await bounds(panel);
+      await shot(panel, `queue-${scheme}-280`, scheme);
+    }
+    await panel.getByRole("button", { name: "Menu", exact: true }).click();
+    await panel.getByRole("menuitem", { name: "Reading history", exact: true }).click();
+    await expect(panel.locator(".events")).toBeVisible();
+    await bounds(panel);
+    await shot(panel, "history-dark-280", "dark");
+    await panel.getByRole("button", { name: "Back", exact: true }).click();
+    await panel.getByRole("button", { name: "Menu", exact: true }).click();
+    await panel.getByRole("menuitem", { name: "Detection Inspector", exact: true }).click();
+    expect((await panel.getByRole("button", { name: "Back", exact: true }).boundingBox())!.y).toBeGreaterThanOrEqual(0);
+    await bounds(panel);
+    await shot(panel, "inspector-dark-280", "dark");
+    expect((await panel.getByRole("button", { name: "Back", exact: true }).boundingBox())!.y).toBeGreaterThanOrEqual(0);
+    await expect(panel.getByRole("button", { name: "Back", exact: true })).toBeInViewport({ ratio: 1 });
+    await panel.getByRole("button", { name: "Back", exact: true }).click();
+    await panel.setViewportSize({ width: 380, height: 820 });
+    await panel.locator(".tabs button").filter({ hasText: /^Continue/ }).click();
 
     // Settings: privacy and statistics.
     const opts = await ctx.newPage();
@@ -127,6 +160,16 @@ test("README screenshots", async () => {
     await shot(opts, "privacy-light", "light");
     await opts.goto(`${ext}/options.html#stats`);
     await shot(opts, "stats-dark", "dark");
+    await opts.setViewportSize({ width: 320, height: 820 });
+    for (const section of ["general", "data", "storage", "sources", "stats", "rules", "shortcuts", "advanced"]) {
+      await opts.goto(`${ext}/options.html#${section}`);
+      await opts.waitForTimeout(200);
+      expect(await opts.evaluate(() => scrollY)).toBe(0);
+      expect((await opts.getByRole("navigation", { name: "Settings sections" }).boundingBox())!.height).toBeLessThanOrEqual(220);
+      if (section === "general") await expect(opts.getByRole("combobox", { name: "Theme", exact: true })).toBeVisible();
+      await bounds(opts);
+      await shot(opts, `settings-${section}-dark-320`, "dark");
+    }
 
     // Hero: the reader beside the panel, composed in a simple browser frame.
     await readTo(reader, `${base.inkwell}/manga/the-last-swordmaster/chapter-58/`, 0.25);
