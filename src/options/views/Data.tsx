@@ -1,7 +1,7 @@
 // Backup: export (metadata / full with covers / CSV), validated import with preview and
 // conflict handling, and restore of recently removed series.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Series } from "../../shared/types/models";
 import { applyImport, exportLibrary, parseBackup, previewImport, toCsv, type BackupFile, type ConflictMode, type ImportPreview } from "../../storage/backup";
 import { listSeries, purgeSeriesNow, restoreSeries } from "../../storage/repositories/series";
@@ -18,14 +18,18 @@ export function DataSection() {
   const [busy, setBusy] = useState(false);
   const [parsed, setParsed] = useState<{ file: BackupFile; preview: ImportPreview } | null>(null);
   const [error, setError] = useState<string>();
+  const [importWarning, setImportWarning] = useState<string>();
+  const [fileName, setFileName] = useState<string>();
   const [mode, setMode] = useState<ConflictMode>("merge");
   const [importSettings, setImportSettings] = useState(false);
   const [removed, setRemoved] = useState<Series[]>([]);
   const [confirmPurge, setConfirmPurge] = useState<Series | null>(null);
+  const selection = useRef(0);
 
   const loadRemoved = async () => setRemoved((await listSeries({ includeRemoved: true })).filter((s) => s.removedAt).sort((a, b) => b.removedAt! - a.removedAt!));
   useEffect(() => {
     void loadRemoved();
+    return () => { selection.current++; };
   }, []);
 
   const doExport = async (kind: "json" | "full" | "csv") => {
@@ -43,13 +47,22 @@ export function DataSection() {
   };
 
   const onFile = async (f: File | undefined) => {
+    const request = ++selection.current;
     setParsed(null);
     setError(undefined);
+    setImportWarning(undefined);
+    setFileName(f?.name);
     if (!f) return;
     if (f.size > 500_000_000) return setError("Import file is too large.");
-    const res = parseBackup(await f.text());
-    if (!res.ok) return setError(res.error);
-    setParsed({ file: res.file, preview: await previewImport(res.file, res.invalid) });
+    try {
+      const res = parseBackup(await f.text());
+      if (request !== selection.current) return;
+      if (!res.ok) return setError(res.error);
+      const preview = await previewImport(res.file, res.invalid);
+      if (request === selection.current) setParsed({ file: res.file, preview });
+    } catch {
+      if (request === selection.current) setError("The backup file could not be opened. Your library has not changed.");
+    }
   };
 
   const doImport = async () => {
@@ -57,9 +70,11 @@ export function DataSection() {
     setBusy(true);
     try {
       const r = await applyImport(parsed.file, mode, { importSettings });
+      setImportWarning(r.settingsWarning);
       publish({ type: "library-changed" });
-      toast.show(`Imported: ${r.added} added, ${r.merged} updated, ${r.skipped} kept as they were`);
+      toast.show(r.settingsWarning ?? `Imported: ${r.added} added, ${r.merged} updated, ${r.skipped} kept as they were`);
       setParsed(null);
+      setFileName(undefined);
     } catch (e) {
       // The import runs in one transaction; a failure leaves the library unchanged.
       toast.show(`Import failed; nothing was changed. ${e instanceof Error ? e.message : ""}`, { error: true });
@@ -80,10 +95,12 @@ export function DataSection() {
         <button className="btn" disabled={busy} onClick={() => void doExport("full")}>Complete backup with covers</button>
         <button className="btn" disabled={busy} onClick={() => void doExport("csv")}>Export CSV</button>
       </div>
-      <p className="small muted">JSON contains everything needed to restore: series, sources, chapters, history, queue and settings. CSV is a readable summary.</p>
+      <p className="small muted">JSON contains everything needed to restore: series, sources, chapters, reading positions, history, lists, tags, queue and settings. CSV is a readable summary.</p>
 
       <h2>Import</h2>
-      <input type="file" accept="application/json,.json" aria-label="Choose a ManwhaTrack backup file" onChange={(e) => void onFile(e.target.files?.[0])} />
+      {importWarning && <p role="status">{importWarning}</p>}
+      <input type="file" disabled={busy} accept="application/json,.json" aria-label="Choose a ManwhaTrack backup file" onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; void onFile(file); }} />
+      {fileName && <p className="small muted" style={{ overflowWrap: "anywhere" }}>Selected backup: {fileName}</p>}
       {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
       {p && (
         <div className="card stack" style={{ marginTop: 12 }}>
@@ -91,18 +108,19 @@ export function DataSection() {
           <div className="small">
             {p.series} series ({p.newSeries} new, {p.duplicates.length} already in your library) · {p.chapters} chapters · {p.events} history events
             {p.covers ? ` · ${p.covers} covers` : ""}
+            {p.collections ? ` · ${p.collections} lists (${p.existingCollections} already exist)` : ""}
             {p.exportedAt ? ` · exported ${relativeTime(Date.parse(p.exportedAt))}` : ""}
           </div>
           {p.invalid > 0 && <div className="small" style={{ color: "var(--warn)" }}>{p.invalid} invalid records will be skipped.</div>}
-          {p.duplicates.length > 0 && (
+          {(p.duplicates.length > 0 || p.existingCollections > 0) && (
             <>
-              <details className="small">
+              {p.duplicates.length > 0 && <details className="small">
                 <summary>Matches with existing series</summary>
                 <ul>{p.duplicates.slice(0, 50).map((d, i) => <li key={i}>{d.imported}{d.imported !== d.existing ? ` → ${d.existing}` : ""}</li>)}</ul>
-              </details>
+              </details>}
               <fieldset style={{ border: 0, padding: 0, margin: 0 }} className="stack">
-                <legend className="small muted">When a series already exists</legend>
-                <label className="check"><input type="radio" name="mode" checked={mode === "merge"} onChange={() => setMode("merge")} /> Merge (keep the furthest progress, combine tags and notes)</label>
+                <legend className="small muted">When a series or list already exists</legend>
+                <label className="check"><input type="radio" name="mode" checked={mode === "merge"} onChange={() => setMode("merge")} /> Merge (combine reading records, lists, tags and notes)</label>
                 <label className="check"><input type="radio" name="mode" checked={mode === "keep"} onChange={() => setMode("keep")} /> Keep existing</label>
                 <label className="check"><input type="radio" name="mode" checked={mode === "replace"} onChange={() => setMode("replace")} /> Use imported</label>
               </fieldset>
@@ -111,7 +129,7 @@ export function DataSection() {
           <label className="check small"><input type="checkbox" checked={importSettings} onChange={(e) => setImportSettings(e.target.checked)} /> Also import settings and site rules</label>
           <div className="row">
             <button className="btn primary" disabled={busy} onClick={() => void doImport()}>Import</button>
-            <button className="btn" onClick={() => setParsed(null)}>Cancel</button>
+            <button className="btn" disabled={busy} onClick={() => { selection.current++; setParsed(null); setFileName(undefined); }}>Cancel</button>
           </div>
         </div>
       )}
