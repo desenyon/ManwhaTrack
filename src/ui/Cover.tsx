@@ -44,11 +44,11 @@ export function useCoverUrl(id: string | undefined): string | null {
 
 export function Cover({ coverId, title, size, children }: { coverId?: string; title: string; size?: "md" | "lg"; children?: React.ReactNode }) {
   const url = useCoverUrl(coverId);
-  const [failed, setFailed] = useState(false);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const initial = (title.trim()[0] ?? "?").toUpperCase();
   return (
     <div className={`cover ${size ?? ""}`}>
-      {url && !failed ? <img src={url} alt={`Cover of ${title}`} loading="lazy" decoding="async" onError={() => setFailed(true)} /> : <span aria-hidden="true">{initial}</span>}
+      {url && failedUrl !== url ? <img src={url} alt={`Cover of ${title}`} loading="lazy" decoding="async" onError={() => setFailedUrl(url)} /> : <span aria-hidden="true">{initial}</span>}
       {children}
     </div>
   );
