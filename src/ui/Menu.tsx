@@ -1,6 +1,6 @@
 // Native-feeling context menu: opens at a point or under an anchor, arrow-key navigable.
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useId, type ReactNode } from "react";
 
 export type MenuItem =
   | { kind?: "item"; label: string; onSelect: () => void; danger?: boolean; hint?: string; disabled?: boolean }
@@ -15,17 +15,26 @@ export interface MenuState {
 
 export function Menu({ state, onClose }: { state: MenuState; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    return () => { if (previous?.isConnected) previous.focus(); };
+  }, []);
   const [pos, setPos] = useState({ left: state.x, top: state.y });
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const r = el.getBoundingClientRect();
-    setPos({
-      left: Math.max(4, Math.min(state.x, innerWidth - r.width - 4)),
-      top: state.y + r.height > innerHeight - 4 ? Math.max(4, state.y - r.height) : state.y,
-    });
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      setPos({
+        left: Math.max(4, Math.min(state.x, innerWidth - r.width - 4)),
+        top: Math.max(4, Math.min(state.y + r.height > innerHeight - 4 ? state.y - r.height : state.y, innerHeight - r.height - 4)),
+      });
+    };
+    place();
     el.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus();
+    addEventListener("resize", place);
+    return () => removeEventListener("resize", place);
   }, [state]);
 
   useEffect(() => {
@@ -85,30 +94,40 @@ export function menuAtElement(el: Element, items: MenuItem[]): MenuState {
   return { x: r.right - 180, y: r.bottom + 4, items };
 }
 
-export function Dialog({ title, children, onClose, labelledBy }: { title: string; children: ReactNode; onClose: () => void; labelledBy?: string }) {
-  const ref = useRef<HTMLDivElement>(null);
+export function Dialog({ title, children, onClose, labelledBy, className = "" }: { title: string; children: ReactNode; onClose: () => void; labelledBy?: string; className?: string }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const generatedId = useId();
+  const id = labelledBy ?? generatedId;
   useEffect(() => {
-    const prev = document.activeElement as HTMLElement | null;
-    ref.current?.querySelector<HTMLElement>("input, textarea, select, button.primary, button")?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    addEventListener("keydown", onKey, true);
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = ref.current;
+    dialog?.showModal();
+    dialog?.querySelector<HTMLElement>("input, textarea, select, button.primary, button")?.focus();
     return () => {
-      removeEventListener("keydown", onKey, true);
-      prev?.focus?.();
+      dialog?.close();
+      if (previous?.isConnected) previous.focus();
     };
-  }, [onClose]);
-  const id = labelledBy ?? "dialog-title";
+  }, []);
   return (
-    <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby={id} ref={ref}>
-        <h2 id={id}>{title}</h2>
-        {children}
-      </div>
-    </div>
+    <dialog className={`dialog ${className}`} aria-labelledby={id} ref={ref}
+      onKeyDown={(e) => {
+        if (e.key !== "Tab") return;
+        const controls = [...e.currentTarget.querySelectorAll<HTMLElement>("button,input,select,textarea,a[href],[tabindex]")].filter(el => !el.matches(":disabled") && el.tabIndex >= 0 && !el.hidden && el.getClientRects().length > 0);
+        const first = controls[0], last = controls.at(-1);
+        if (!first || !last) { e.preventDefault(); e.currentTarget.focus(); return; }
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }}
+      onCancel={(e) => { e.preventDefault(); closeRef.current(); }}
+      onClick={(e) => {
+        if (e.target !== e.currentTarget) return;
+        const r = e.currentTarget.getBoundingClientRect();
+        if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeRef.current();
+      }}>
+      <h2 id={id}>{title}</h2>
+      {children}
+    </dialog>
   );
 }
