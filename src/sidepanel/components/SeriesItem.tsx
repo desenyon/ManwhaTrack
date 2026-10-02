@@ -168,23 +168,15 @@ export const SeriesTile = memo(function SeriesTile({ s, host, selected, checked,
         <span className="flags">{s.pinned && <Icon name="pin" label="Pinned" />}{s.favorite && <Icon name="starFill" label="Favorite" />}</span>
         <button className="series-title" aria-label={`${selecting ? (checked ? "Deselect" : "Select") : "Details for"} ${s.title}`} onClick={(e) => { e.stopPropagation(); onOpen(s); }}>{s.title}</button>
       </div>
-      <div className="row tile-progress">
-        <SeriesProgress s={s} />
-        <span className="spacer" />
-        {s.summary.continueKind !== "none" && (
-          <button
-            className="icon-btn"
-            style={{ width: 22, height: 22 }}
-            aria-label={`${continueText(s)} ${s.title}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onContinue(s, e);
-            }}
-            onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); e.stopPropagation(); onContinue(s, e); } }}
-          >
-            <Icon name="play" />
-          </button>
-        )}
+      <div className="tile-progress"><SeriesProgress s={s} updates={false} /></div>
+      <div className="tile-reading">
+        <span className="small faint">{s.lastReadAt ? `Read ${relativeTime(s.lastReadAt)}` : "Not started"}</span>
+        {s.summary.continueKind !== "none" && <button
+          className="btn sm primary"
+          aria-label={`${continueText(s)} ${s.title}`}
+          onClick={(e) => { e.stopPropagation(); onContinue(s, e); }}
+          onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); e.stopPropagation(); onContinue(s, e); } }}
+        >{continueText(s)}</button>}
       </div>
       <div className="tile-footer">{host && <SourceBadge host={host} />}<button className="icon-btn" aria-label={`More actions for ${s.title}`} onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onMenu(s, r.right - 180, r.bottom + 4); }}><Icon name="more" /></button></div>
     </div>
