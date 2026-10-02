@@ -15,17 +15,19 @@ export type ViewId =
   | "favorites"
   | "pinned"
   | "queue"
-  | "all";
+  | "all"
+  | `collection:${string}`;
 
 export const PRIMARY_VIEWS: { id: ViewId; label: string }[] = [
   { id: "continue", label: "Continue" },
   { id: "new", label: "New" },
-  { id: "reading", label: "Reading" },
-  { id: "favorites", label: "Favorites" },
-  { id: "all", label: "All" },
+
 ];
 
 export const MORE_VIEWS: { id: ViewId; label: string }[] = [
+  { id: "all", label: "All series" },
+  { id: "reading", label: "Reading" },
+  { id: "favorites", label: "Favorites" },
   { id: "recent", label: "Recently read" },
   { id: "planning", label: "Plan to read" },
   { id: "on-hold", label: "On hold" },
@@ -78,7 +80,7 @@ export function inView(s: Series, view: ViewId, now = Date.now(), queue: string[
     case "recent":
       return !!s.lastReadAt && now - s.lastReadAt < 30 * DAY;
     case "new":
-      return s.summary.newCount > 0 && s.status !== "dropped";
+      return s.summary.newCount > 0 && s.status === "reading" && !!s.lastReadAt;
     case "reading":
     case "planning":
     case "on-hold":
@@ -93,6 +95,8 @@ export function inView(s: Series, view: ViewId, now = Date.now(), queue: string[
       return queue.includes(s.id);
     case "all":
       return true;
+    default:
+      return false;
   }
 }
 
