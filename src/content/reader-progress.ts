@@ -107,7 +107,7 @@ export class ReaderProgress {
   private isActive(): boolean {
     if (this.stopped || !this.userActive || !this.canMeasure() || document.visibilityState !== "visible" || !document.hasFocus() || Date.now() - this.lastActivity >= IDLE_AFTER_MS) return false;
     const el = this.getContainer();
-    if (!el || !el.isConnected) return true;
+    if (!el || !el.isConnected) return false;
     const r = el.getBoundingClientRect();
     return r.bottom > 0 && r.top < innerHeight;
   }
