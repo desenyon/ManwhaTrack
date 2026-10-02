@@ -7,7 +7,7 @@ import { sendToWorker } from "../../shared/messages";
 import { useToast } from "../../ui/toasts";
 import { Icon } from "../../ui/icons";
 
-export function InspectorView({ state, series, onBack, onOpenSeries }: { state?: TabState; series?: Series; onBack: () => void; onOpenSeries: (id: string) => void }) {
+export function InspectorView({ state, series, onBack, onOpenSeries, onManual }: { state?: TabState; series?: Series; onBack: () => void; onOpenSeries: (id: string) => void; onManual: () => void }) {
   const toast = useToast();
   const obs = state?.observation;
   return (
@@ -20,6 +20,7 @@ export function InspectorView({ state, series, onBack, onOpenSeries }: { state?:
         <div className="empty">
           <h2>Could not detect this page.</h2>
           <p>Either the page has no reading signals, or it has not finished loading. Reload the page and open the inspector again.</p>
+          <button className="btn" onClick={onManual}>Track a series manually</button>
         </div>
       ) : (
         <div className="section stack">
@@ -70,6 +71,7 @@ export function InspectorView({ state, series, onBack, onOpenSeries }: { state?:
                 Track anyway
               </button>
             )}
+            {!series && <button className="btn sm" onClick={onManual}>Track a series manually</button>}
             <button className="btn sm" onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL(`options.html#rules?host=${encodeURIComponent(obs.hostname)}`) })}>
               Create site rule…
             </button>
