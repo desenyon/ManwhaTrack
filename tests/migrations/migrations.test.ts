@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MIGRATIONS, migrateRecords, SCHEMA_VERSION, upgradeDatabase, type MigrationStep } from "../../src/storage/migrations";
 import { closeDb, openDb, useDatabase } from "../../src/storage/db";
-import { repairChapter, repairSeries } from "../../src/storage/schema";
+import { createChapter, createSeries, createSource, repairChapter, repairSeries } from "../../src/storage/schema";
 
 function open(name: string, version: number, steps: Record<number, MigrationStep>): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -101,4 +101,29 @@ describe("schema migrations", () => {
     expect(c?.ordinal).toBe(4);
     expect(c?.visitCount).toBe(0);
   });
+});
+
+it("repairs version 4 joined chapter labels, summaries and events without losing saved reading data", async () => {
+  const name = `mig-${crypto.randomUUID()}`;
+  const old = await open(name, 4, MIGRATIONS);
+  const series = createSeries({title:"Nano Machine"});
+  const source = createSource({seriesId:series.id,seriesUrl:"https://asurascans.com/comics/nano-machine-3ec3b16f"});
+  const chapter = createChapter({seriesId:series.id,sourceId:source.id,label:"Chapter 324105. TP <2>Aug 5, 2026",url:`${source.seriesUrl}/chapter/324`});
+  chapter.maxProgress=.56; chapter.readingTimeMs=1250; chapter.lastOpenedAt=1000;
+  chapter.readingPosition={version:1,capturedAt:1000,progressRevision:0,readerOffset:1700,readerHeight:6000,viewportHeight:800};
+  const manual = createChapter({seriesId:series.id,sourceId:source.id,label:"Chapter 14350.Night in the Inn",url:`${source.seriesUrl}/chapter/143`});
+  manual.userFields=["label","number"];
+  series.currentChapterId=chapter.id;
+  source.latestKnownChapter={key:chapter.key,label:chapter.chapterLabel,ordinal:chapter.ordinal,url:chapter.url};
+  await put(old,"series",series); await put(old,"sources",source); await put(old,"chapters",chapter); await put(old,"chapters",manual);
+  await put(old,"events",{id:"event",seriesId:series.id,chapterId:chapter.id,type:"opened",timestamp:1000,chapterLabel:chapter.chapterLabel});
+  old.close();
+  const upgraded = await open(name, SCHEMA_VERSION, MIGRATIONS);
+  const chapters = await getAll(upgraded,"chapters") as typeof chapter[];
+  expect(chapters.find(c=>c.id===chapter.id)).toEqual({...chapter,key:"324",chapterLabel:"Chapter 324",chapterNumber:324,ordinal:324,associationOverridden:false});
+  expect(chapters.find(c=>c.id===manual.id)?.chapterLabel).toBe(manual.chapterLabel);
+  expect((await getAll(upgraded,"sources") as typeof source[])[0]?.latestKnownChapter?.label).toBe("Chapter 324");
+  expect((await getAll(upgraded,"series") as typeof series[])[0]?.summary.currentLabel).toBe("Chapter 324");
+  expect((await getAll(upgraded,"events") as {chapterLabel:string}[])[0]?.chapterLabel).toBe("Chapter 324");
+  upgraded.close();
 });
