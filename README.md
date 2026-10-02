@@ -41,7 +41,7 @@ Reading across a handful of sites means remembering which chapter you reached, w
 <td width="50%" valign="top">
 
 ### Library that stays out of the way
-A dense side panel beside whatever you're reading. Continue and New stay visible; the list chooser holds your own collections and other library views. Open the full library with the expand icon beside the header menu. Both views share the same local data, list/grid layout, filters, sorting and search.
+A dense side panel beside whatever you're reading. Continue and New stay visible; the list chooser holds your own collections and other library views. Open the full library with the expand icon beside the header menu. Both views share the same local data, filters, sorting and search. The sidebar starts as a compact list; the expanded library starts with larger cover cards. Each remembers its own layout.
 
 </td>
 <td width="50%" valign="top">
@@ -106,11 +106,11 @@ Optional update checks go straight to each site — a few per run, one per site,
 
 ## Resume and organize
 
-- **Resume** reopens an unfinished chapter at the saved viewport, anchored to the reader image when possible. Scrolling backward saves that earlier place without reducing furthest-read progress. Positions stay local and are included in JSON backups. Ordinary chapter visits do not automatically scroll.
+- **Resume** opens an unfinished chapter in a separate browser window at the saved viewport, anchored to the reader image when possible. Scrolling backward saves that earlier place without reducing furthest-read progress. Positions stay local and are included in JSON backups. Ordinary chapter visits do not automatically scroll.
 - Scroll readers support position restoration, including delayed image layout. Paged/canvas readers still resume the chapter; automatic page navigation is not supported. Older records gain a saved viewport on their next visit, rather than guessing one from percentage read.
 - Choose **Lists / All → Create / manage lists** to create, rename or delete lists and choose their series. Use **Assign to lists** in a series menu, details, or a multiple selection. A series can belong to several lists; deleting a list preserves its reading records.
 - Add arbitrary tags in series details, or use **Add tag** for a multiple selection. Tags are searchable and available in Filters. **New** shows known unread chapters for series you have actively read with Reading status; Continue also displays new-chapter counts.
-- Click **Expand library** beside the header menu for the full local library tab, with a navigation rail at wide widths. Continue there opens a reading tab so the library remains available.
+- Click **Expand library** beside the header menu for the full local library tab, with a navigation rail at wide widths. Resume opens a separate reading window; other Continue destinations open a reading tab so the library remains available. Modifier or middle-click opens a new tab.
 - Chapter and reading-state chips keep compact rows readable; source badges retain the original hostname in their tooltip. Expanded details separate metadata, sources and the chapter timeline into columns.
 - The timer below **Your library** measures active reading and pauses when the chapter loses focus, the reader leaves view, or you are idle for 90 seconds. Open **Time tracking** beside it or from the expanded navigation rail for locally saved totals by series and chapter. Closing the browser preserves recorded totals; the live session clock starts fresh.
 - Bundled engraved artwork has independent hand, cloud, bridge and water movement. It pauses when hidden or off-screen. **Play / Pause** in the footer controls motion; **Settings → General → Artwork motion** also offers System, On and Off. System respects reduced motion; explicit Play enables it. The bridge height responds to window height and the space occupied by the visible library.
@@ -228,7 +228,7 @@ npm run check
 
 The end-to-end suite loads the built extension in Chromium and checks the core promise: discover a series, read Chapter 31, click *Next*, restart the browser, press *Continue*, land on Chapter 32 — plus saved viewport Resume, persistent lists/tags, backup, expanded-library interactions, update checks, offline use and survival of service-worker termination.
 
-The latest [UI polish verification](docs/implementation/ui-polish-verification.md) includes expanded details, narrow list forms, chapter corrections, adaptive artwork and reduced-motion checks, with review screenshots.
+The latest [library refinement verification](docs/implementation/library-refinement-verification.md) covers Nano Machine chapter repair, separate-window Resume, expanded cards and details, layout persistence and active-time checks. Earlier [motion and time verification](docs/implementation/motion-time-verification.md) records the animation and timer acceptance checks.
 
 <details>
 <summary><b>Project layout</b></summary>
