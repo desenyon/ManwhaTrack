@@ -67,7 +67,7 @@ export const madaraAdapter: SiteAdapter = {
     for (const t of [activeCrumb, heading, urlLabel ?? ""]) {
       const p = parseChapterLabel(t.replace(/^.*?(?=\b(?:chapter|ch|episode|ep)\b)/i, ""));
       if (t && p.kind !== "special") {
-        label = p.label;
+        label = urlLabel && p.number !== parseChapterLabel(urlLabel).number ? urlLabel : p.label;
         break;
       }
     }
