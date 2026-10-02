@@ -4,6 +4,8 @@
 
 import type { PageObservation } from "../detection/types";
 import type { SiteRule } from "./types/settings";
+import type { ReadingPosition } from "./types/models";
+import { sanitizeReadingPosition } from "./reading-position";
 import { isSafeHttpUrl } from "../detection/normalization/url";
 
 // ---- content script → service worker
@@ -17,10 +19,21 @@ export interface ChapterProgressMessage {
   chapterId: string;
   progress: number;
   readingTimeDeltaMs: number;
+  progressRevision?: number;
   final?: boolean;
+  readingPosition?: ReadingPosition;
 }
 export interface ChapterNextClickedMessage {
   type: "chapter/next-clicked";
+  chapterId: string;
+  progressRevision?: number;
+}
+export interface ReadingActivity {
+  active: boolean;
+  sessionMs: number;
+}
+export interface ChapterActivityMessage extends ReadingActivity {
+  type: "chapter/activity";
   chapterId: string;
 }
 export interface UndoTrackMessage {
@@ -36,6 +49,8 @@ export interface ContinueMessage {
   tabId?: number;
   /** Open a specific chapter or source URL instead of the computed destination. */
   url?: string;
+  /** Explicitly restore a saved viewport when reopening a specific chapter. */
+  resume?: boolean;
 }
 export interface CheckUpdatesMessage {
   type: "updates/check";
@@ -69,6 +84,9 @@ export interface NotificationsChangedMessage {
 export type ExtensionMessage =
   | PageObservedMessage
   | ChapterProgressMessage
+  | ChapterActivityMessage
+  | { type: "chapter/state"; chapterId: string }
+  | { type: "chapter/resume-position"; chapterId: string; progressRevision: number }
   | ChapterNextClickedMessage
   | UndoTrackMessage
   | ContinueMessage
@@ -93,12 +111,22 @@ export interface OffscreenParseMessage {
 }
 
 // ---- responses
+export interface ProgressResponse {
+  completed: boolean;
+  progress: number;
+  progressRevision: number;
+  stale?: boolean;
+}
+
 export interface ObservedResponse {
+  ok?: boolean;
   tracked?: {
     seriesId: string;
     seriesTitle: string;
     chapterId?: string;
     chapterLabel?: string;
+    progressRevision?: number;
+    progress?: number;
     created: boolean;
     restored: boolean;
   };
@@ -112,6 +140,7 @@ export interface TabState {
   seriesId?: string;
   chapterId?: string;
   progress?: number;
+  readingActivity?: ReadingActivity & { sampledAt: number; chapterId: string };
   errorPage?: boolean;
   updatedAt: number;
 }
@@ -138,7 +167,7 @@ export function sanitizeObservation(raw: unknown): PageObservation | null {
   if (!url || !kinds.includes(o.kind as string) || !isNum(o.confidence)) return null;
   const obs: PageObservation = {
     url,
-    hostname: cleanText(o.hostname, 255) ?? "",
+    hostname: new URL(url).hostname.replace(/^www\./, ""),
     kind: o.kind as PageObservation["kind"],
     confidence: Math.max(0, Math.min(1, o.confidence)),
     evidence: Array.isArray(o.evidence)
@@ -187,7 +216,7 @@ export function sanitizeObservation(raw: unknown): PageObservation | null {
 }
 
 export function isProgressMessage(m: ExtensionMessage): m is ChapterProgressMessage {
-  return m.type === "chapter/progress" && isStr(m.chapterId, 64) && isNum(m.progress) && isNum(m.readingTimeDeltaMs);
+  return m.type === "chapter/progress" && isStr(m.chapterId, 64) && isNum(m.progress) && isNum(m.readingTimeDeltaMs) && m.progress >= 0 && m.progress <= 1 && m.readingTimeDeltaMs >= 0 && (m.progressRevision === undefined || (Number.isInteger(m.progressRevision) && m.progressRevision >= 0)) && (m.readingPosition === undefined || !!sanitizeReadingPosition(m.readingPosition));
 }
 
 export function sendToWorker<R = unknown>(msg: ExtensionMessage): Promise<R | undefined> {
