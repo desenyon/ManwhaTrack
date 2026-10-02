@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 export function TagEditor({ tags, suggestions, onChange }: { tags: string[]; suggestions: string[]; onChange: (tags: string[]) => void }) {
   const [draft, setDraft] = useState("");
@@ -7,7 +7,7 @@ export function TagEditor({ tags, suggestions, onChange }: { tags: string[]; sug
     if (v && !tags.some((x) => x.toLowerCase() === v.toLowerCase())) onChange([...tags, v]);
     setDraft("");
   };
-  const listId = "tag-suggestions";
+  const listId = useId();
   return (
     <div className="tags">
       {tags.map((t) => (
@@ -32,6 +32,7 @@ export function TagEditor({ tags, suggestions, onChange }: { tags: string[]; sug
         }}
         onBlur={() => draft && add(draft)}
       />
+      <button className="btn sm" disabled={!draft.trim()} onMouseDown={(e) => e.preventDefault()} onClick={() => add(draft)}>Add tag</button>
       <datalist id={listId}>
         {suggestions.filter((s) => !tags.includes(s)).map((s) => (
           <option key={s} value={s} />
