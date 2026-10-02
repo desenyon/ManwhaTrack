@@ -3,7 +3,11 @@
 // optional fields. A missing or failing step aborts the upgrade, which leaves the
 // existing database untouched — never clear data to "recover".
 
-export const SCHEMA_VERSION = 4;
+import type { Chapter, ReadingEvent, Series, SeriesSource } from "../shared/types/models";
+import { correctJoinedChapterLabel, parseChapterLabel } from "../detection/normalization/chapter";
+import { computeSeriesState } from "./summary";
+
+export const SCHEMA_VERSION = 5;
 
 export type MigrationStep = (db: IDBDatabase, tx: IDBTransaction) => void;
 
@@ -42,8 +46,9 @@ export const MIGRATIONS: Record<number, MigrationStep> = {
   4: (_db, tx) => {
     // One cursor combines prior transforms during a direct 1 → 4 upgrade.
     // Existing chapters have no guessed viewport: maxProgress is not a position.
-    migrateRecords<Record<string, unknown>>(tx, "chapters", c => ({ ...c, progressRevision: c.progressRevision ?? 0, associationOverridden: c.associationOverridden === true }));
+    if (_db.version < 5) migrateRecords<Record<string, unknown>>(tx, "chapters", c => ({ ...c, progressRevision: c.progressRevision ?? 0, associationOverridden: c.associationOverridden === true }));
   },
+  5: (_db, tx) => repairJoinedChapterRecords(tx),
   2: (db, tx) => {
     // Version 3 combines chapter transforms in one cursor. Concurrent upgrade
     // cursors otherwise overwrite each other's snapshots during a 1 → 3 upgrade.
@@ -79,4 +84,54 @@ export function migrateRecords<T>(tx: IDBTransaction, storeName: string, fn: (re
     if (next !== undefined) cursor.update(next);
     cursor.continue();
   };
+}
+
+/** Read all related records before writes, keeping the repair atomic and IDs intact. */
+function repairJoinedChapterRecords(tx: IDBTransaction): void {
+  const chapters = tx.objectStore("chapters").getAll();
+  const sources = tx.objectStore("sources").getAll();
+  const series = tx.objectStore("series").getAll();
+  const events = tx.objectStore("events").getAll();
+  let remaining = 4;
+  const done = () => {
+    if (--remaining) return;
+    const changed = new Set<string>();
+    const labels = new Map<string, { before: string; after: string }>();
+    for (const c of chapters.result as Chapter[]) {
+      const label = typeof c.chapterLabel === "string" && typeof c.url === "string" &&
+        (!c.userFields || (Array.isArray(c.userFields) && !c.userFields.some(f => f === "label" || f === "number"))) ? correctJoinedChapterLabel(c.chapterLabel, c.url) : undefined;
+      if (label) {
+        const p = parseChapterLabel(label);
+        labels.set(c.id, {before:c.chapterLabel, after:label});
+        Object.assign(c, {chapterLabel:label, chapterNumber:p.number, ordinal:p.ordinal, key:p.key, seasonNumber:p.season, volumeNumber:p.volume});
+        changed.add(c.seriesId);
+      }
+      // Combine earlier migrations here, so concurrent upgrade cursors cannot overwrite repairs.
+      c.progressRevision ??= 0;
+      c.associationOverridden = c.associationOverridden === true;
+      tx.objectStore("chapters").put(c);
+    }
+    for (const src of sources.result as SeriesSource[]) {
+      const lk = src.latestKnownChapter;
+      const label = lk?.url && correctJoinedChapterLabel(lk.label, lk.url);
+      if (!label || !lk) continue;
+      const p = parseChapterLabel(label);
+      src.latestKnownChapter = {...lk, label, ordinal:p.ordinal, key:p.key};
+      changed.add(src.seriesId);
+      tx.objectStore("sources").put(src);
+    }
+    for (const s of series.result as Series[]) {
+      if (!changed.has(s.id)) continue;
+      Object.assign(s, computeSeriesState(s, (chapters.result as Chapter[]).filter(c=>c.seriesId===s.id), (sources.result as SeriesSource[]).filter(src=>src.seriesId===s.id)));
+      tx.objectStore("series").put(s);
+    }
+    for (const event of events.result as ReadingEvent[]) {
+      const label = event.chapterId && labels.get(event.chapterId);
+      if (label && event.chapterLabel === label.before) {
+        event.chapterLabel = label.after;
+        tx.objectStore("events").put(event);
+      }
+    }
+  };
+  for (const request of [chapters, sources, series, events]) request.onsuccess = done;
 }
