@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { chapterObs, freshDb, seriesObs, SL, slChapter } from "../helpers/obs";
 import { completeChapter, recordProgress, trackChapterOpened, trackSeriesPage } from "../../src/storage/tracking";
 import { editSeries, getSeries, listSeries } from "../../src/storage/repositories/series";
-import { listChapters, markChapters, markReadUpTo, setProgressTo } from "../../src/storage/repositories/chapters";
+import { editChapter, listChapters, markChapters, markReadUpTo, setProgressTo } from "../../src/storage/repositories/chapters";
 import { listEvents } from "../../src/storage/repositories/history";
 import { listSources } from "../../src/storage/repositories/sources";
 
@@ -199,4 +199,18 @@ describe("persistence", () => {
     expect(s?.title).toBe("Persisted");
     expect(s?.summary.currentLabel).toBe("Chapter 2");
   });
+});
+
+it("repairs a bad automatic chapter identity on rediscovery without replacing progress or overrides", async () => {
+  const url = "https://asurascans.com/comics/nano-machine-3ec3b16f/chapter/324";
+  const seriesUrl = "https://asurascans.com/comics/nano-machine-3ec3b16f";
+  const r = (await trackChapterOpened(chapterObs({ title: "Nano Machine", seriesUrl, label: "Chapter 324105. TP <2>Aug 5, 2026", url })))!;
+  await recordProgress(r.chapterId!, { progress: .56, readingTimeDeltaMs: 650, threshold: T });
+  await trackSeriesPage(seriesObs({ title: "Nano Machine", url: seriesUrl, chapters: [{label:"Chapter 324",url},{label:"Chapter 332",url: url.replace("324","332")}] }));
+  const chapter = (await listChapters(r.seriesId)).find(c => c.id === r.chapterId)!;
+  expect(chapter).toMatchObject({ chapterLabel: "Chapter 324", chapterNumber: 324, ordinal: 324, key: "324", maxProgress:.56, readingTimeMs:650 });
+  expect((await getSeries(r.seriesId))?.summary).toMatchObject({currentLabel:"Chapter 324",latestKnownLabel:"Chapter 332",newCount:1});
+  await editChapter(chapter.id, {label:"Chapter 320",number:320});
+  await trackChapterOpened(chapterObs({title:"Nano Machine",seriesUrl,label:"Chapter 324",url}));
+  expect((await listChapters(r.seriesId)).find(c=>c.id===chapter.id)?.chapterLabel).toBe("Chapter 320");
 });
