@@ -48,6 +48,7 @@ export interface SiteRule {
 
 export interface Settings {
   theme: ThemePreference;
+  artworkMotion: "system" | "on" | "off";
   layout: LibraryLayout;
   /** Where Continue opens by default. Modifier/middle-click always opens a new tab. */
   continueIn: "current" | "new";
@@ -81,6 +82,7 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutAction, string> = {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "system",
+  artworkMotion: "system",
   layout: "list",
   continueIn: "current",
   completionThreshold: 0.85,
