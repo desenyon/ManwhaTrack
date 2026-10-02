@@ -1,0 +1,7 @@
+{
+  "series": 1000,
+  "chapters": 20000,
+  "loadMs": 190,
+  "searchMs": 115,
+  "httpRequests": 0
+}
