@@ -7,7 +7,7 @@ const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
     <ToastProvider>
-      <App />
+      <App expanded={location.pathname.endsWith("/library.html")} />
     </ToastProvider>,
   );
 }
