@@ -6,7 +6,7 @@ import type { Series, SeriesStatus } from "../shared/types/models";
 import type { Settings } from "../shared/types/settings";
 import { editSeries, removeSeries, restoreSeries } from "../storage/repositories/series";
 import { markChapters } from "../storage/repositories/chapters";
-import { addToQueue, removeFromQueue } from "../storage/repositories/queue";
+import { setQueue } from "../storage/repositories/queue";
 import { sendToWorker } from "../shared/messages";
 import { publish } from "../shared/bus";
 import { STATUS_LABEL } from "../shared/utils/library";
@@ -23,7 +23,7 @@ export function useActions(lib: Lib, settings: Settings, activeTabId: number | u
     async (s: Series, opts: { newTab?: boolean; url?: string } = {}) => {
       const newTab = opts.newTab ?? settings.continueIn === "new";
       const res = await sendToWorker<{ ok: boolean; error?: string }>({ type: "continue/open", seriesId: s.id, newTab, tabId: newTab ? undefined : activeTabId, url: opts.url });
-      if (res && !res.ok) toast.show(res.error ?? "Could not open this series.", { error: true });
+      if (!res?.ok) toast.show(res?.error ?? "Could not open this series.", { error: true });
     },
     [settings.continueIn, activeTabId, toast],
   );
@@ -95,11 +95,12 @@ export function useActions(lib: Lib, settings: Settings, activeTabId: number | u
 
   const toggleQueue = useCallback(
     async (s: Series) => {
-      const inQueue = lib.queue.includes(s.id);
-      lib.setQueueLocal(inQueue ? lib.queue.filter((x) => x !== s.id) : [...lib.queue, s.id]);
-      await (inQueue ? removeFromQueue(s.id) : addToQueue(s.id));
-      toast.show(inQueue ? "Removed from queue" : "Added to queue");
-      publish({ type: "library-changed" });
+      let inQueue = false;
+      const ok = await lib.mutateQueue((queue) => {
+        inQueue = queue.includes(s.id);
+        return inQueue ? queue.filter((x) => x !== s.id) : [...queue, s.id];
+      }, setQueue);
+      toast.show(ok ? (inQueue ? "Removed from queue" : "Added to queue") : "Could not save the queue.", { error: !ok });
     },
     [lib, toast],
   );
