@@ -11,14 +11,16 @@ import { Cover } from "../../ui/Cover";
 import { useToast } from "../../ui/toasts";
 import { NowReading } from "../components/NowReading";
 import { FilterBar } from "../components/FilterBar";
-import { SeriesRow, SeriesTile, continueText } from "../components/SeriesItem";
+import { SeriesRow, SeriesTile, continueText, LIBRARY_ROW_HEIGHT } from "../components/SeriesItem";
 import { VirtualList } from "../components/VirtualList";
 import { BatchBar } from "../components/BatchBar";
 import { QueueView } from "./QueueView";
 import type { Actions } from "../useActions";
 import type { useLibrary } from "../../ui/hooks";
+import type { Collection } from "../../shared/types/collections";
+import { HandsScene, LibraryFooter } from "../components/Artwork";
+import { ReadingTimer } from "../components/ReadingTimer";
 
-const ROW_H = 68;
 const GRID_PAGE = 120;
 
 export interface HomeProps {
@@ -36,6 +38,13 @@ export interface HomeProps {
   visible: Series[];
   counts: Partial<Record<ViewId, number>>;
   query: string;
+  collection?: Collection;
+  collections: Collection[];
+  collectionsError?: string;
+  onReloadCollections: () => void;
+  onOpenCollection: (id: string) => void;
+  onManageLists: () => void;
+  onOpenTime: () => void;
   focusedId?: string;
   setFocusedId: (id: string | undefined) => void;
   selecting: boolean;
@@ -48,6 +57,7 @@ export interface HomeProps {
   onOpenSeries: (id: string) => void;
   onMenu: (s: Series, x: number, y: number) => void;
   onInspect: () => void;
+  onManual: () => void;
   scrollRef: RefObject<HTMLDivElement | null>;
 }
 
@@ -59,11 +69,10 @@ export function HomeView(p: HomeProps) {
   const tabSeries = p.tab.state?.seriesId ? lib.byId.get(p.tab.state.seriesId) : undefined;
   const hero = !p.query
     ? lib.series
-        .filter((s) => inView(s, "continue"))
+        .filter((s) => inView(s, "continue") && (!p.collection || p.collection.seriesIds.includes(s.id)))
         .sort((a, b) => (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0))[0]
     : undefined;
-  // The Continue tab already lists these; the hero only helps from other views.
-  const heroHidden = !hero || p.view === "continue" || (tabSeries?.id === hero.id && p.tab.state?.observation.kind === "chapter");
+  const heroHidden = !hero || (tabSeries?.id === hero.id && p.tab.state?.observation.kind === "chapter");
 
   const onContinue = (s: Series, e: MouseEvent) => {
     const modifier = e.metaKey || e.ctrlKey || e.button === 1;
@@ -82,14 +91,14 @@ export function HomeView(p: HomeProps) {
   };
 
   const dup = p.duplicates[0];
-  const isMoreView = MORE_VIEWS.some((v) => v.id === p.view);
+  const isMoreView = MORE_VIEWS.some((v) => v.id === p.view) || !!p.collection;
 
-  if (!lib.loaded) return null;
+  if (!lib.loaded) return <div className="empty" role="status"><h2>Opening your local library…</h2></div>;
   if (lib.error) {
     return (
       <div className="empty" role="alert">
         <h2>The local library could not be opened.</h2>
-        <p>{lib.error}</p>
+        <p>{lib.error}</p><button className="btn primary" onClick={() => void lib.reload()}>Retry</button>
       </div>
     );
   }
@@ -99,6 +108,7 @@ export function HomeView(p: HomeProps) {
     host: hostOf(s.id),
     selected: p.focusedId === s.id,
     checked: p.checked.has(s.id),
+    selecting: p.selecting,
     onOpen: (x: Series) => (p.selecting ? onCheck(x, !p.checked.has(x.id)) : p.onOpenSeries(x.id)),
     onContinue,
     onMenu: p.onMenu,
@@ -106,7 +116,9 @@ export function HomeView(p: HomeProps) {
   });
 
   return (
-    <>
+    <><div className="library-home"><div className="library-content">
+      <div className="folio-heading"><span className="section-title">{p.collection ? "Your list" : "A private reading collection"}</span><h1 className={p.collection ? "collection-title" : undefined} title={p.collection?.name}>{p.collection?.name ?? "Your library."}</h1>{p.collection && <button className="btn sm ghost" onClick={p.onManageLists}>Manage lists</button>}</div>
+      <ReadingTimer series={lib.series} onOpenTime={p.onOpenTime} />
       <NowReading state={p.tab.state} series={tabSeries} onOpenSeries={p.onOpenSeries} onInspect={p.onInspect} />
 
       {dup && !p.query && (
@@ -117,6 +129,7 @@ export function HomeView(p: HomeProps) {
           <button
             className="btn sm"
             onClick={async () => {
+              if (!confirm(`Merge “${dup[1].title}” into “${dup[0].title}”? All sources and history will be preserved.`)) return;
               await mergeSeries(dup[0].id, dup[1].id);
               publish({ type: "library-changed" });
               toast.show(`Merged into “${dup[0].title}”`);
@@ -137,7 +150,8 @@ export function HomeView(p: HomeProps) {
       )}
 
       {hero && !heroHidden && (
-        <section className="section" aria-label="Continue reading">
+        <section className="section featured-continue" aria-label="Continue reading">
+          <HandsScene />
           <h2 className="section-title">Continue</h2>
           <div className="continue-card">
             <button className="icon-btn" style={{ width: "auto", height: "auto" }} onClick={() => p.onOpenSeries(hero.id)} aria-label={`Details for ${hero.title}`}>
@@ -145,10 +159,12 @@ export function HomeView(p: HomeProps) {
             </button>
             <div style={{ minWidth: 0 }}>
               <div className="truncate" style={{ fontWeight: 650 }}>{hero.title}</div>
-              <div className="small muted tabular">
-                {hero.summary.continueLabel ? shortChapterLabel(hero.summary.continueLabel) : ""} {hero.summary.continueKind === "resume" && hero.summary.currentProgress ? `· ${Math.round(hero.summary.currentProgress * 100)}% read` : ""}
+              <div className="series-progress">
+                {hero.summary.continueLabel && <span className="meta-card tabular">{shortChapterLabel(hero.summary.continueLabel)}</span>}
+                {hero.summary.continueKind === "resume" && !!hero.summary.currentProgress && <span className="meta-card tabular">{Math.round(hero.summary.currentProgress * 100)}% read</span>}
               </div>
               <div className="small faint">{lastReadText(hero.lastReadAt)}</div>
+              {hero.summary.newCount > 0 && <span className="badge">+{hero.summary.newCount} new</span>}
             </div>
             <button className="btn primary" onClick={(e) => onContinue(hero, e)} onAuxClick={(e) => e.button === 1 && onContinue(hero, e)}>
               {continueText(hero)}
@@ -158,31 +174,39 @@ export function HomeView(p: HomeProps) {
       )}
 
       {!p.query && (
-        <div className="tabs" role="tablist" aria-label="Library views">
+        <nav className="tabs" aria-label="Library views">
           {PRIMARY_VIEWS.map((v) => (
-            <button key={v.id} role="tab" className="tab" aria-selected={p.view === v.id} onClick={() => p.setView(v.id)}>
+            <button key={v.id} className="tab" aria-pressed={p.view === v.id} onClick={() => p.setView(v.id)}>
               {v.label}
               {(v.id === "continue" || v.id === "new") && p.counts[v.id] ? <span className="count tabular">{p.counts[v.id]}</span> : null}
             </button>
           ))}
           <select
             className="tab"
-            aria-label="More views"
-            aria-selected={isMoreView}
+            aria-label="Lists and library views"
             value={isMoreView ? p.view : ""}
-            onChange={(e) => e.target.value && p.setView(e.target.value as ViewId)}
-            style={{ appearance: "none", borderBottomColor: isMoreView ? "var(--accent)" : undefined }}
+            onChange={(e) => {
+              const value = e.target.value;
+              if (value === "manage") p.onManageLists();
+              else if (value.startsWith("collection:")) p.onOpenCollection(value.slice(11));
+              else if (value) p.setView(value as ViewId);
+            }}
+            style={{ borderBottomColor: isMoreView ? "var(--accent)" : undefined }}
           >
-            <option value="">More</option>
-            {MORE_VIEWS.map((v) => (
+            <option value="">Lists / All</option>
+            <option value="manage">Create / manage lists…</option>
+            {p.collections.length > 0 && <optgroup label="Your lists">{p.collections.map(c => <option key={c.id} value={`collection:${c.id}`}>{c.name} ({c.seriesIds.length})</option>)}</optgroup>}
+            <optgroup label="Library">{MORE_VIEWS.map((v) => (
               <option key={v.id} value={v.id}>
                 {v.label}
                 {p.counts[v.id] ? ` (${p.counts[v.id]})` : ""}
               </option>
-            ))}
+            ))}</optgroup>
           </select>
-        </div>
+        </nav>
       )}
+
+      {p.collectionsError && <div className="banner" role="alert"><span>{p.collectionsError}</span><button className="btn sm" onClick={p.onReloadCollections}>Retry lists</button></div>}
 
       {p.view === "queue" && !p.query ? (
         <QueueView lib={lib} actions={actions} onOpenSeries={p.onOpenSeries} />
@@ -199,11 +223,11 @@ export function HomeView(p: HomeProps) {
             onLayout={(layout) => void p.updateSettings({ layout })}
             count={p.visible.length}
           />
-          {p.visible.length === 0 ? (
-            <EmptyState view={p.view} query={p.query} total={lib.series.length} />
+          {p.visible.length === 0 && p.collection && !p.query ? <div className="empty"><h2>This list is empty.</h2><p>Assign series from their menu, details, or a multiple selection.</p><button className="btn" onClick={p.onManageLists}>Manage lists</button></div> : p.visible.length === 0 ? (
+            <EmptyState onManual={p.onManual} view={p.view} query={p.query} total={lib.series.length} />
           ) : settings.layout === "grid" ? (
             <>
-              <div className="grid" role="listbox" aria-label="Series">
+              <div className={`grid ${p.selecting ? "selecting" : ""}`} role="list" aria-label="Series">
                 {p.visible.slice(0, gridLimit).map((s) => (
                   <SeriesTile key={s.id} {...itemProps(s)} />
                 ))}
@@ -219,7 +243,7 @@ export function HomeView(p: HomeProps) {
           ) : (
             <VirtualList
               items={p.visible}
-              rowHeight={ROW_H}
+              rowHeight={LIBRARY_ROW_HEIGHT}
               scrollRef={p.scrollRef}
               label="Series"
               selectingClass={p.selecting ? "selecting" : undefined}
@@ -229,6 +253,9 @@ export function HomeView(p: HomeProps) {
         </>
       )}
 
+      </div>
+      {!p.query && <LibraryFooter count={p.visible.length} motion={settings.artworkMotion} onMotion={(artworkMotion) => void p.updateSettings({ artworkMotion })} />}
+      </div>
       {p.selecting && (
         <BatchBar
           selected={p.visible.filter((s) => p.checked.has(s.id))}
@@ -243,7 +270,7 @@ export function HomeView(p: HomeProps) {
   );
 }
 
-function EmptyState({ view, query, total }: { view: ViewId; query: string; total: number }) {
+function EmptyState({ view, query, total, onManual }: { view: ViewId; query: string; total: number; onManual: () => void }) {
   if (query) {
     return (
       <div className="empty">
@@ -257,6 +284,7 @@ function EmptyState({ view, query, total }: { view: ViewId; query: string; total
       <div className="empty">
         <h2>No series tracked yet.</h2>
         <p>Open a manhwa and it will appear here automatically.</p>
+        <button className="btn" onClick={onManual}>Track a series manually</button>
       </div>
     );
   }
