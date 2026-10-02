@@ -78,7 +78,7 @@ export function RulesSection({ settings, update, prefillHost }: SectionProps & {
                     </td>
                     <td style={{ textAlign: "right" }}>
                       <button className="btn sm" onClick={() => setEditing(r)}>Edit</button>{" "}
-                      <button className="btn sm danger" onClick={() => void update({ siteRules: settings.siteRules.filter((x) => x.id !== r.id) })}>Delete</button>
+                      <button className="btn sm danger" onClick={() => { if (confirm(`Delete the local rule for ${r.host}? Automatic detection will be used instead.`)) void update({ siteRules: settings.siteRules.filter((x) => x.id !== r.id) }); }}>Delete</button>
                     </td>
                   </tr>
                 ))}
