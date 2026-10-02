@@ -8,13 +8,14 @@ import { batchEdit } from "../../storage/repositories/series";
 import { setProgressTo } from "../../storage/repositories/chapters";
 import { exportLibrary } from "../../storage/backup";
 import { publish } from "../../shared/bus";
+import { CollectionAssignmentDialog } from "./Collections";
 import { Dialog } from "../../ui/Menu";
 import { useToast } from "../../ui/toasts";
 import { downloadFile } from "../../ui/download";
 
 export function BatchBar({ selected, onClear, onRemove }: { selected: Series[]; onClear: () => void; onRemove: (ids: string[]) => void }) {
   const toast = useToast();
-  const [dialog, setDialog] = useState<null | "add-tag" | "remove-tag" | "progress" | "delete">(null);
+  const [dialog, setDialog] = useState<null | "add-tag" | "remove-tag" | "progress" | "delete" | "collections">(null);
   const [value, setValue] = useState("");
   const ids = selected.map((s) => s.id);
 
@@ -51,6 +52,7 @@ export function BatchBar({ selected, onClear, onRemove }: { selected: Series[]; 
           <option key={s} value={s}>{STATUS_LABEL[s]}</option>
         ))}
       </select>
+      <button className="btn sm" disabled={!selected.length} onClick={() => setDialog("collections")}>Assign to lists</button>
       <button className="btn sm" disabled={!selected.length} onClick={() => setDialog("add-tag")}>Add tag</button>
       <button className="btn sm" disabled={!selected.length} onClick={() => setDialog("remove-tag")}>Remove tag</button>
       <button className="btn sm" disabled={!selected.length} onClick={() => apply(() => batchEdit(ids, () => ({ favorite: true })), "Added to favorites")}>Favorite</button>
@@ -69,6 +71,8 @@ export function BatchBar({ selected, onClear, onRemove }: { selected: Series[]; 
       <span className="spacer" />
       <button className="btn sm danger" disabled={!selected.length} onClick={() => setDialog("delete")}>Remove…</button>
       <button className="btn sm ghost" onClick={onClear}>Done</button>
+
+      {dialog === "collections" && <CollectionAssignmentDialog seriesIds={ids} onClose={close} />}
 
       {(dialog === "add-tag" || dialog === "remove-tag") && (
         <Dialog title={dialog === "add-tag" ? `Add tag to ${selected.length} series` : `Remove tag from ${selected.length} series`} onClose={close}>
