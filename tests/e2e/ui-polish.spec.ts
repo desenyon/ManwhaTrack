@@ -65,6 +65,7 @@ test("sidebar metadata, expanded details, list forms, adaptive artwork and reduc
     const initial = await clouds.evaluate(el => getComputedStyle(el).transform);
     await full.waitForTimeout(400);
     expect(await clouds.evaluate(el => getComputedStyle(el).transform)).not.toBe(initial);
+    await full.locator(".colophon").scrollIntoViewIfNeeded();
     await expect(full.locator(".colophon")).toHaveAttribute("data-visible", "true");
     // Headless Chromium keeps background pages visible. Exercise the visibility
     // handler explicitly; reduced motion and off-screen pausing remain real.
@@ -72,15 +73,16 @@ test("sidebar metadata, expanded details, list forms, adaptive artwork and reduc
     await expect(full.locator(".colophon")).toHaveAttribute("data-visible", "false");
     expect(await full.locator(".river-shimmer").evaluate(el => getComputedStyle(el).animationPlayState)).toBe("paused");
     await full.evaluate(() => { Reflect.deleteProperty(document, "visibilityState"); document.dispatchEvent(new Event("visibilitychange")); });
+    await full.locator(".featured-continue").scrollIntoViewIfNeeded();
     await expect(full.locator(".featured-continue .hands-scene")).toHaveAttribute("data-visible", "true");
     await full.emulateMedia({ reducedMotion: "reduce" });
     expect(await clouds.evaluate(el => getComputedStyle(el).animationName)).toBe("none");
     await shot(full, "polished-expanded-dark");
-    await full.locator(".srow").filter({ hasText: "Nano Machine" }).click();
+    await full.locator(".tile").filter({ hasText: "Nano Machine" }).click();
     await expect(full.locator(".detail-layout")).toBeVisible();
     await expect(full.locator(".detail-chapters .chapters li")).toHaveCount(100);
-    await expect(full.locator(".progress-facts")).toContainText("Chapter 153");
-    await expect(full.locator(".progress-facts")).toContainText("Chapter 304");
+    await expect(full.locator(".progress-facts")).toContainText("Ch. 153");
+    await expect(full.locator(".progress-facts")).toContainText("Ch. 304");
     const chapterBox = await full.locator(".detail-chapters").boundingBox();
     const metadataBox = await full.locator(".detail-metadata").boundingBox();
     expect(chapterBox!.x).toBeGreaterThan(metadataBox!.x + metadataBox!.width);
@@ -94,8 +96,8 @@ test("sidebar metadata, expanded details, list forms, adaptive artwork and reduc
     await full.getByLabel("Label", { exact: true }).fill("Chapter 153.5");
     await full.getByLabel("Number used for ordering (blank for specials)").fill("153.5");
     await full.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(full.locator(".progress-facts")).toContainText("Chapter 153.5");
-    await full.reload(); await full.locator(".srow").filter({ hasText: "Nano Machine" }).click(); await expect(full.locator(".progress-facts")).toContainText("Chapter 153.5");
+    await expect(full.locator(".progress-facts")).toContainText("Ch. 153.5");
+    await full.reload(); await full.locator(".tile").filter({ hasText: "Nano Machine" }).click(); await expect(full.locator(".progress-facts")).toContainText("Ch. 153.5");
     await full.getByRole("button", { name: "Back to library", exact: true }).click();
     await full.getByRole("button", { name: "Create or manage lists", exact: true }).click();
     const dialog = full.getByRole("dialog");
@@ -127,6 +129,9 @@ test("sidebar metadata, expanded details, list forms, adaptive artwork and reduc
     await expect(panel.locator(".colophon-compact")).toBeAttached();
     expect(await panel.locator(".landscape-scene").evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(roomy);
     await full.getByRole("complementary").getByRole("button", { name: "All series", exact: true }).click();
+    await expect(full.locator(".featured-continue")).toHaveCount(0);
+    await full.getByRole("complementary").getByRole("button", { name: /^Continue\b/ }).click();
+    await full.setViewportSize({ width: 1280, height: 600 });
     await full.emulateMedia({ reducedMotion: "no-preference" });
     await full.locator(".colophon").scrollIntoViewIfNeeded();
     await expect(full.locator(".featured-continue .hands-scene")).toHaveAttribute("data-visible", "false");
