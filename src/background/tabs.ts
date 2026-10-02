@@ -4,6 +4,16 @@
 import type { TabState } from "../shared/messages";
 
 const key = (tabId: number) => `tab:${tabId}`;
+// Chrome storage has no atomic object patch. Serialize each tab's read/write
+// operations so a progress checkpoint cannot overwrite a newer clock sample.
+const writes = new Map<number, Promise<void>>();
+function writeTab(tabId: number, operation: () => Promise<void>): Promise<void> {
+  const pending = (writes.get(tabId) ?? Promise.resolve()).catch(() => undefined).then(operation);
+  writes.set(tabId, pending);
+  const clean = () => { if (writes.get(tabId) === pending) writes.delete(tabId); };
+  void pending.then(clean, clean);
+  return pending;
+}
 
 export async function getTabState(tabId: number): Promise<TabState | undefined> {
   const res = await chrome.storage.session.get(key(tabId));
@@ -11,17 +21,19 @@ export async function getTabState(tabId: number): Promise<TabState | undefined> 
 }
 
 export async function setTabState(state: TabState): Promise<void> {
-  await chrome.storage.session.set({ [key(state.tabId)]: state });
+  await writeTab(state.tabId, async () => { await chrome.storage.session.set({ [key(state.tabId)]: state }); });
 }
 
 export async function patchTabState(tabId: number, patch: Partial<TabState>): Promise<void> {
-  const cur = await getTabState(tabId);
-  if (cur) await setTabState({ ...cur, ...patch, updatedAt: Date.now() });
+  await writeTab(tabId, async () => {
+    const cur = await getTabState(tabId);
+    if (cur) await chrome.storage.session.set({ [key(tabId)]: { ...cur, ...patch, updatedAt: Date.now() } });
+  });
 }
 
 /** Forgets page state. Pending Continue expectations survive navigation unless the tab closed. */
 export async function clearTabState(tabId: number, opts: { tabClosed?: boolean } = {}): Promise<void> {
-  await chrome.storage.session.remove(opts.tabClosed ? [key(tabId), expectKey(tabId)] : [key(tabId)]);
+  await writeTab(tabId, async () => { await chrome.storage.session.remove(opts.tabClosed ? [key(tabId), expectKey(tabId), `resume:${tabId}`] : [key(tabId)]); });
 }
 
 // ---- Continue expectations: used to notice moved or missing pages ----
