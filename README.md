@@ -19,7 +19,7 @@ series, chapters, progress and covers — and keeps every bit of it on your own 
 
 <br>
 
-<img src="docs/screenshots/hero.png" alt="A chapter open in the browser with the ManwhaTrack side panel beside it, listing tracked series with covers, progress and Continue buttons" width="100%">
+<img src="docs/implementation/motion-time-screenshots/hero.png" alt="A chapter open in the browser with the ManwhaTrack side panel beside it, listing tracked series with covers, progress and Continue buttons" width="100%">
 
 </div>
 
@@ -41,14 +41,14 @@ Reading across a handful of sites means remembering which chapter you reached, w
 <td width="50%" valign="top">
 
 ### Library that stays out of the way
-A dense side panel beside whatever you're reading. Continue, New, Reading, Favorites, All and more views; composable filters; sort remembered per view; list or grid; instant, typo-tolerant search.
+A dense side panel beside whatever you're reading. Continue and New stay visible; the list chooser holds your own collections and other library views. Open the full library with the expand icon beside the header menu. Both views share the same local data, list/grid layout, filters, sorting and search.
 
 </td>
 <td width="50%" valign="top">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/library-dark.png">
-  <img src="docs/screenshots/library-light.png" alt="Continue view listing series in progress with chapter, percentage read and new-chapter counts" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/implementation/motion-time-screenshots/library-dark.png">
+  <img src="docs/implementation/motion-time-screenshots/library-light.png" alt="Continue view listing series in progress with chapter, percentage read and new-chapter counts" width="100%">
 </picture>
 
 </td>
@@ -57,8 +57,8 @@ A dense side panel beside whatever you're reading. Continue, New, Reading, Favor
 <td width="50%" valign="top">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/detail-dark.png">
-  <img src="docs/screenshots/detail-light.png" alt="Series detail with cover, status, Resume button, progress facts and a chapter timeline" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/implementation/motion-time-screenshots/detail-dark.png">
+  <img src="docs/implementation/motion-time-screenshots/detail-light.png" alt="Series detail with cached cover, Resume, progress facts and editable library details" width="100%">
 </picture>
 
 </td>
@@ -78,25 +78,42 @@ Optional update checks go straight to each site — a few per run, one per site,
 </td>
 <td width="50%" valign="top">
 
-<img src="docs/screenshots/grid-dark.png" alt="Grid of illustrated covers with new-chapter badges" width="100%">
+<img src="docs/implementation/motion-time-screenshots/grid-dark.png" alt="Grid of illustrated covers with new-chapter badges" width="100%">
 
 </td>
 </tr>
 </table>
 
-**Also inside:** multiple sources per series with duplicate suggestions, merge and split · a reading queue with drag-and-drop · batch actions with Undo · a <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd> command palette · `mt` search in the address bar · a Detection Inspector that shows exactly what was recognized and why · your own CSS-selector rules for unusual sites · reading statistics · light, dark and system themes · full keyboard control.
+**Also inside:** persistent custom lists with individual/bulk assignment · multiple sources per series with duplicate suggestions, merge and split · a reading queue with drag-and-drop · batch actions with Undo · a <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd> command palette · `mt` search in the address bar · a Detection Inspector that shows exactly what was recognized and why · your own CSS-selector rules for unusual sites · reading statistics · light, dark and system themes · full keyboard control.
 
 <p align="center">
-  <img src="docs/screenshots/palette-dark.png" alt="Command palette searching the library" width="32%">
+  <img src="docs/implementation/motion-time-screenshots/palette-dark.png" alt="Command palette searching the library" width="32%">
   &nbsp;
-  <img src="docs/screenshots/privacy-light.png" alt="Storage and privacy settings" width="64%">
+  <img src="docs/implementation/motion-time-screenshots/privacy-light.png" alt="Storage and privacy settings" width="64%">
 </p>
+
+<details>
+<summary><b>Reading time</b></summary>
+<br>
+<img src="docs/implementation/motion-time-screenshots/time-tracking-expanded.png" alt="Expanded time tracking with recorded totals by series and chapter" width="100%">
+</details>
 
 <details>
 <summary><b>Reading statistics</b></summary>
 <br>
-<img src="docs/screenshots/stats-dark.png" alt="Statistics page with chapters finished per day and week, most-read series and recently active sources" width="100%">
+<img src="docs/implementation/motion-time-screenshots/stats-dark.png" alt="Statistics page with chapters finished per day and week, most-read series and recently active sources" width="100%">
 </details>
+
+## Resume and organize
+
+- **Resume** reopens an unfinished chapter at the saved viewport, anchored to the reader image when possible. Scrolling backward saves that earlier place without reducing furthest-read progress. Positions stay local and are included in JSON backups. Ordinary chapter visits do not automatically scroll.
+- Scroll readers support position restoration, including delayed image layout. Paged/canvas readers still resume the chapter; automatic page navigation is not supported. Older records gain a saved viewport on their next visit, rather than guessing one from percentage read.
+- Choose **Lists / All → Create / manage lists** to create, rename or delete lists and choose their series. Use **Assign to lists** in a series menu, details, or a multiple selection. A series can belong to several lists; deleting a list preserves its reading records.
+- Add arbitrary tags in series details, or use **Add tag** for a multiple selection. Tags are searchable and available in Filters. **New** shows known unread chapters for series you have actively read with Reading status; Continue also displays new-chapter counts.
+- Click **Expand library** beside the header menu for the full local library tab, with a navigation rail at wide widths. Continue there opens a reading tab so the library remains available.
+- Chapter and reading-state chips keep compact rows readable; source badges retain the original hostname in their tooltip. Expanded details separate metadata, sources and the chapter timeline into columns.
+- The timer below **Your library** measures active reading and pauses when the chapter loses focus, the reader leaves view, or you are idle for 90 seconds. Open **Time tracking** beside it or from the expanded navigation rail for locally saved totals by series and chapter. Closing the browser preserves recorded totals; the live session clock starts fresh.
+- Bundled engraved artwork has independent hand, cloud, bridge and water movement. It pauses when hidden or off-screen. **Play / Pause** in the footer controls motion; **Settings → General → Artwork motion** also offers System, On and Off. System respects reduced motion; explicit Play enables it. The bridge height responds to window height and the space occupied by the visible library.
 
 ## Supported sites
 
@@ -184,9 +201,9 @@ flowchart LR
   H --> I[Side panel<br>Continue]
 ```
 
-- **Content script** (framework-free, ~40 KB) detects the page, watches client-side navigation, and measures progress through the chapter's reader area — or page count on paged readers.
+- **Content script** (framework-free, ~50 KB) detects the page, watches client-side navigation, and measures progress through the chapter's reader area — or page count on paged readers.
 - **Service worker** validates everything it receives, writes each change in a single IndexedDB transaction, caches covers as small local images, and runs update checks. Nothing depends on the worker staying alive.
-- **Side panel and settings** are React, reading the same local database directly.
+- **Side panel, full library and settings** are React, reading the same local database directly.
 
 ## Development
 
@@ -205,11 +222,13 @@ npm run check
 | `npm run dev` | Rebuild on change (reload the extension to pick it up) |
 | `npm run test:e2e` | Build, then run the Chromium end-to-end suite |
 | `LIVE=1 npm run test:e2e -- live-sites` | Smoke-test against the real supported sites |
-| `SCREENSHOT_DIR=docs/screenshots npm run test:e2e -- screenshots` | Regenerate the README screenshots |
+| `SCREENSHOT_DIR=docs/implementation/collections-resume-screenshots npm run test:e2e -- screenshots` | Regenerate the README screenshots |
 | `npm run package` | Build and zip `dist/` for release |
 | `npm run launch` | Open Chrome for Testing with the extension loaded |
 
-The end-to-end suite loads the built extension in Chromium and checks the core promise: discover a series, read Chapter 31, click *Next*, restart the browser, press *Continue*, land on Chapter 32 — plus update checks, offline use and survival of service-worker termination.
+The end-to-end suite loads the built extension in Chromium and checks the core promise: discover a series, read Chapter 31, click *Next*, restart the browser, press *Continue*, land on Chapter 32 — plus saved viewport Resume, persistent lists/tags, backup, expanded-library interactions, update checks, offline use and survival of service-worker termination.
+
+The latest [UI polish verification](docs/implementation/ui-polish-verification.md) includes expanded details, narrow list forms, chapter corrections, adaptive artwork and reduced-motion checks, with review screenshots.
 
 <details>
 <summary><b>Project layout</b></summary>
