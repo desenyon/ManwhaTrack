@@ -52,7 +52,8 @@ export const madaraAdapter: SiteAdapter = {
   },
 
   extractChapterList(doc, url) {
-    return chapterLinksFrom(doc, "li.wp-manga-chapter > a", url.href);
+    const list = qs(doc, "#manga-chapters-holder") ?? qs(doc, ".listing-chapters_wrap") ?? doc;
+    return chapterLinksFrom(list, "li.wp-manga-chapter > a", url.href);
   },
 
   extractChapter(doc, url) {
