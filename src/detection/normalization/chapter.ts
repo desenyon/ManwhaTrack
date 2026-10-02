@@ -176,3 +176,14 @@ export function shortChapterLabel(label: string | undefined, ordinal?: number): 
   if (ordinal !== undefined && p.kind === "prologue") return "Prologue";
   return label.length > 28 ? `${label.slice(0, 27)}…` : label;
 }
+
+/** Correct only a joined numeric prefix whose explicit chapter URL proves the identity. */
+export function correctJoinedChapterLabel(label: string, href: string): string | undefined {
+  let url: URL;
+  try { url = new URL(href); } catch { return; }
+  const identity = chapterLabelFromUrl(url);
+  const expected = identity && parseChapterLabel(identity).number;
+  const digits = /^Chapter\s+(\d+)(?=[.:]\s*\D)/i.exec(label)?.[1];
+  if (expected === undefined || !digits || digits === String(expected) || !digits.startsWith(String(expected))) return;
+  return identity;
+}
