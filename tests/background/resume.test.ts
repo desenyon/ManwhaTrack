@@ -8,11 +8,12 @@ import { useDatabase } from "../../src/storage/db";
 import { chapterObs, SL, slChapter } from "../helpers/obs";
 import { DEFAULT_SETTINGS } from "../../src/shared/types/settings";
 
-let data: Record<string,unknown>, navigations:string[], creates:string[];
+let data: Record<string,unknown>, navigations:string[], creates:string[], windows:string[];
 beforeEach(()=>{
-  useDatabase(`resume-${crypto.randomUUID()}`); data={}; navigations=[]; creates=[];
+  useDatabase(`resume-${crypto.randomUUID()}`); data={}; navigations=[]; creates=[]; windows=[];
   const kv={get:async(k:string)=>({[k]:data[k]}),set:async(v:Record<string,unknown>)=>Object.assign(data,v),remove:async(k:string)=>{delete data[k]}};
   vi.stubGlobal("chrome",{runtime:{getURL:(p:string)=>`chrome-extension://test/${p}`},storage:{local:kv,session:kv,onChanged:{addListener(){}}},
+    windows:{create:async(o:{url:string})=>{windows.push(o.url);return {id:2,tabs:[{id:7}]}}},
     tabs:{query:async()=>[{id:7}],create:async(o:{url:string})=>{creates.push(o.url);return {id:7}},update:async(id:number,o:{url:string})=>{expect(data['resume:7']).toBeDefined();navigations.push(o.url);return{id}}}});
 });
 afterEach(()=>vi.unstubAllGlobals());
@@ -62,4 +63,11 @@ it.each(["ignored", "incognito"])("does not expose a saved position to a %s page
   data.settings={...DEFAULT_SETTINGS,ignoredHosts:policy==='ignored'?['example-scans.com']:[],trackIncognito:false};
   const blocked=policy==='incognito'?{...sender,tab:{...sender.tab,incognito:true} as chrome.tabs.Tab}:sender;
   expect(await handleMessage({type:"chapter/resume-position",chapterId:c.id,progressRevision:0},blocked)).toEqual({});
+});
+
+it("opens Resume in a separate window and registers position before navigation",async()=>{
+  const {r,c,sender}=await visit();
+  await handleMessage({type:"continue/open",seriesId:r.seriesId,newTab:false,newWindow:true},{url:"chrome-extension://test/library.html"});
+  expect(windows).toEqual(["about:blank"]); expect(creates).toEqual([]); expect(navigations).toEqual([c.url]);
+  expect(await handleMessage({type:"chapter/resume-position",chapterId:c.id,progressRevision:0},sender)).toEqual({position:c.readingPosition});
 });
