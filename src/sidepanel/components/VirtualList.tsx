@@ -45,7 +45,7 @@ export function VirtualList<T>({
 
   const visible = items.slice(range.start, Math.max(range.end, range.start + 1));
   return (
-    <div ref={ref} className={`list ${selectingClass ?? ""}`} role="listbox" aria-label={label} style={{ height: items.length * rowHeight }}>
+    <div ref={ref} className={`list ${selectingClass ?? ""}`} role="list" aria-label={label} style={{ height: items.length * rowHeight }}>
       <div style={{ transform: `translateY(${range.start * rowHeight}px)` }}>{visible.map((it, i) => render(it, range.start + i))}</div>
     </div>
   );
