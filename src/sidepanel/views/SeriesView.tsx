@@ -20,6 +20,7 @@ import { Cover } from "../../ui/Cover";
 import { Icon } from "../../ui/icons";
 import { Dialog, Menu, menuAtElement, type MenuState } from "../../ui/Menu";
 import { useToast } from "../../ui/toasts";
+import { shortChapterLabel } from "../../detection/normalization/chapter";
 import { updatesSupported } from "../../detection";
 import { CollectionMembership } from "../components/Collections";
 import { TagEditor } from "../components/TagEditor";
@@ -123,7 +124,7 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
         <div className="row reading-actions">
           {sm.continueKind !== "none" && (
             <button className="btn primary" style={{ flex: 1 }} onClick={(e) => void actions.continueSeries(s, { newTab: e.metaKey || e.ctrlKey ? true : undefined })} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); void actions.continueSeries(s, { newTab: true }); } }}>
-              {continueText(s)}{sm.continueLabel ? ` · ${sm.continueLabel}` : ""}
+              {continueText(s)}{sm.continueLabel ? ` · ${shortChapterLabel(sm.continueLabel)}` : ""}
             </button>
           )}
           <button className="btn" onClick={() => setDialog("progress")}>Set progress</button>
@@ -133,38 +134,38 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
       <section className="detail-progress" aria-label="Reading position">
         <dl className="progress-facts">
           <div><dt>Last completed</dt><dd className="tabular">
-            {sm.lastCompletedLabel ? `${sm.lastCompletedLabel} read` : "Nothing read yet"}
+            {sm.lastCompletedLabel ? `${shortChapterLabel(sm.lastCompletedLabel)} read` : "Nothing read yet"}
             {sm.caughtUp ? " · Caught up" : sm.newCount > 0 ? ` · ${sm.newCount} new` : ""}
           </dd></div>
-          <div><dt>Current chapter</dt><dd>{sm.currentLabel ? `${sm.currentLabel}${sm.currentCompleted ? " (read)" : sm.currentProgress ? ` · ${Math.round(sm.currentProgress * 100)}% read` : ""}` : "Not opened yet"}</dd></div>
-          <div><dt>Latest known</dt><dd>{sm.latestKnownLabel ?? "Unknown"}{sources.some((x) => x.storyEnded) ? " · story ended" : ""}</dd></div>
+          <div><dt>Current chapter</dt><dd>{sm.currentLabel ? `${shortChapterLabel(sm.currentLabel)}${sm.currentCompleted ? " (read)" : sm.currentProgress ? ` · ${Math.round(sm.currentProgress * 100)}% read` : ""}` : "Not opened yet"}</dd></div>
+          <div><dt>Latest known</dt><dd>{sm.latestKnownLabel ? shortChapterLabel(sm.latestKnownLabel) : "Unknown"}{sources.some((x) => x.storyEnded) ? " · story ended" : ""}</dd></div>
           <div><dt>Last read</dt><dd>{s.lastReadAt ? relativeTime(s.lastReadAt) : "Not started"}</dd></div>
         </dl>
       </section>
 
       <section className="detail-metadata library-metadata stack">
         <h2 className="section-title">Library details</h2>
-        <div className="row small" style={{ flexWrap: "wrap", gap: 4 }}>
-          <button className="btn sm ghost" onClick={() => setDialog("title")}>Edit title</button>
+        <div className="detail-edit-actions">
+          <button className="btn sm" onClick={() => setDialog("title")}>Edit title</button>
           {s.userFields.includes("title") && s.detectedTitle && s.detectedTitle !== s.title && (
             <button className="btn sm ghost" title={`Detected: ${s.detectedTitle}`} onClick={async () => { await resetUserField(s.id, "title"); changed(); }}>Use detected title</button>
           )}
+          <button className="btn sm" onClick={() => setDialog("aliases")}>Edit aliases</button>
         </div>
         {s.alternateTitles.length > 0 && <div className="small muted" style={{ marginTop: 2 }}>Also: {s.alternateTitles.slice(0, 4).join(" · ")}{s.alternateTitles.length > 4 ? ` +${s.alternateTitles.length - 4}` : ""}</div>}
-        <button className="btn sm ghost" style={{ paddingLeft: 0 }} onClick={() => setDialog("aliases")}>Edit aliases</button>
-        <div className="row" style={{ flexWrap: "wrap" }}>
-          <label className="sr-only" htmlFor="status">Status</label>
+        <div className="detail-preferences">
+          <div className="detail-field"><label htmlFor="status">Status</label>
           <select id="status" className="select" value={s.status} onChange={(e) => void actions.setStatus(s, e.target.value as Series["status"])}>
             {SERIES_STATUSES.map((st) => <option key={st} value={st}>{STATUS_LABEL[st]}</option>)}
           </select>
-          <label className="sr-only" htmlFor="rating">Rating</label>
+          </div><div className="detail-field"><label htmlFor="rating">Rating</label>
           <select id="rating" className="select" value={s.personalRating ?? ""} onChange={(e) => void save({ personalRating: e.target.value === "" ? null : Number(e.target.value) }, { personalRating: e.target.value === "" ? undefined : Number(e.target.value) })}>
             <option value="">No rating</option>
             {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((n) => <option key={n} value={n}>{n} / 10</option>)}
           </select>
-          <button className="icon-btn fav-toggle" aria-pressed={s.favorite} aria-label={s.favorite ? "Remove from favorites" : "Add to favorites"} onClick={() => void actions.toggleFavorite(s)}>
+          </div><div className="detail-field"><span>Favorite</span><button className="icon-btn fav-toggle" aria-pressed={s.favorite} aria-label={s.favorite ? "Remove from favorites" : "Add to favorites"} onClick={() => void actions.toggleFavorite(s)}>
             <Icon name={s.favorite ? "starFill" : "star"} />
-          </button>
+          </button></div>
         </div>
         <div className="detail-field"><h3>Lists</h3><CollectionMembership seriesId={s.id} /></div>
         <div className="detail-field"><h3>Tags</h3><TagEditor tags={s.tags} suggestions={allTags} onChange={(tags) => void save({ tags }, { tags })} /></div>
