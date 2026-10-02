@@ -229,7 +229,7 @@ export async function handleMessage(msg: ExtensionMessage, sender: Sender): Prom
       const url = msg.url ?? s?.summary.continueUrl;
       if (!s || !url || !isSafeHttpUrl(url)) return { ok: false, error: "No reading destination is known for this series." };
       // Register the private intent before the new content script can detect its page.
-      const tabId = msg.newTab ? (await chrome.tabs.create({ url: "about:blank", active: true })).id :
+      const tabId = msg.newWindow ? (await chrome.windows.create({ url: "about:blank", focused: true }))?.tabs?.[0]?.id : msg.newTab ? (await chrome.tabs.create({ url: "about:blank", active: true })).id :
         msg.tabId ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
       if (tabId === undefined) return { ok: false, error: "Could not find a browser tab." };
       const resume = msg.resume ?? (!msg.url && s.summary.continueKind === "resume");
