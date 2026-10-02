@@ -1,0 +1,838 @@
+diff --git a/src/background/covers.ts b/src/background/covers.ts
+index 7c6f9f7..ca934e9 100644
+--- a/src/background/covers.ts
++++ b/src/background/covers.ts
+@@ -1,12 +1,13 @@
+ // Downloads cover images once and caches them locally as small blobs.
+ 
+ import { fetchImage } from "./net";
+-import { setCustomCover, setDetectedCover, type NewCover } from "../storage/repositories/covers";
++import { getCover, setCustomCover, setDetectedCover, type NewCover } from "../storage/repositories/covers";
+ import { getSeries } from "../storage/repositories/series";
+ import { listSources } from "../storage/repositories/sources";
+ import { isSafeHttpUrl } from "../detection/normalization/url";
+ import { publish } from "../shared/bus";
+ import { warn } from "./log";
++import { getCoverStatus, setCoverStatus } from "../storage/cover-status";
+ 
+ const MAX_WIDTH = 360;
+ const inflight = new Map<string, Promise<void>>();
+@@ -47,12 +48,25 @@ export function cacheDetectedCover(seriesId: string, url: string, referer?: stri
+   let p = inflight.get(k);
+   if (!p) {
+     p = (async () => {
++      const series = await getSeries(seriesId);
++      if (!series || series.removedAt) { inflight.delete(k); return; }
++      const previous = await getCoverStatus(seriesId);
++      const cached = series.detectedCoverId ? await getCover(series.detectedCoverId) : undefined;
++      const now = Date.now();
++      if (previous?.url === url && ((previous.state === "ready" && cached?.blob) || (previous.state === "pending" && now - previous.attemptedAt < 120_000) || (previous.state === "failed" && now < (previous.retryAfter ?? 0)))) {
++        inflight.delete(k);
++        return;
++      }
+       try {
++        await setCoverStatus(seriesId, { state: "pending", url, attemptedAt: now });
+         const asset = await downloadCover(url, referer);
+         await setDetectedCover(seriesId, asset);
++        await setCoverStatus(seriesId, { state: "ready", url, attemptedAt: now });
+         publish({ type: "library-changed", seriesIds: [seriesId] });
+       } catch (err) {
+         warn("cover", err);
++        await setCoverStatus(seriesId, { state: "failed", url, attemptedAt: now, retryAfter: now + 15 * 60_000, error: "Cover could not be downloaded. Retry from the series details." });
++        publish({ type: "library-changed", seriesIds: [seriesId] });
+       } finally {
+         inflight.delete(k);
+       }
+@@ -68,18 +82,24 @@ export async function refreshCover(seriesId: string, chosenUrl?: string): Promis
+   if (!series) return { ok: false, error: "Series not found." };
+   const sources = await listSources(seriesId);
+   const src = sources.find((s) => s.id === series.preferredSourceId) ?? sources[0];
++  const url = chosenUrl ?? src?.coverUrl ?? src?.coverCandidates[0];
++  if (!url) return { ok: false, error: "No cover has been detected for this series yet." };
++  const attemptedAt = Date.now();
+   try {
++    await setCoverStatus(seriesId, { state: "pending", url, attemptedAt });
+     if (chosenUrl) {
+       const asset = await downloadCover(chosenUrl, src?.seriesUrl);
+       await setCustomCover(seriesId, { ...asset, origin: "custom" });
+     } else {
+-      const url = src?.coverUrl ?? src?.coverCandidates[0];
+-      if (!url) return { ok: false, error: "No cover has been detected for this series yet." };
+       await setDetectedCover(seriesId, await downloadCover(url, src?.seriesUrl));
+     }
++    await setCoverStatus(seriesId, { state: "ready", url, attemptedAt });
+     publish({ type: "library-changed", seriesIds: [seriesId] });
+     return { ok: true };
+   } catch (err) {
+-    return { ok: false, error: err instanceof Error ? err.message : "Cover could not be downloaded." };
++    const error = "Cover could not be downloaded. The source may be unavailable.";
++    await setCoverStatus(seriesId, { state: "failed", url, attemptedAt, error, retryAfter: attemptedAt + 15 * 60_000 });
++    publish({ type: "library-changed", seriesIds: [seriesId] });
++    return { ok: false, error };
+   }
+ }
+diff --git a/src/background/messages.ts b/src/background/messages.ts
+index fb08147..481fe71 100644
+--- a/src/background/messages.ts
++++ b/src/background/messages.ts
+@@ -12,6 +12,8 @@ import {
+ import { CONFIDENCE, type PageObservation } from "../detection/types";
+ import { hostMatches, isSafeHttpUrl } from "../detection/normalization/url";
+ import { completeChapter, markSourceFailing, recordProgress, trackChapterOpened, trackSeriesPage, type TrackResult } from "../storage/tracking";
++import { read } from "../storage/db";
++import type { Chapter } from "../shared/types/models";
+ import { getSeries, purgeSeriesNow, removeSeries } from "../storage/repositories/series";
+ import { markChapters } from "../storage/repositories/chapters";
+ import { getSettings } from "../storage/repositories/settings";
+@@ -41,12 +43,14 @@ export async function persistObservation(obs: PageObservation, force = false): P
+ 
+ async function onObserved(msg: PageObservedMessage, sender: Sender): Promise<ObservedResponse> {
+   const tab = sender.tab;
+-  if (!tab?.id || sender.frameId) return {};
++  if (tab?.id === undefined || sender.frameId) return { ok: true };
+   const settings = await getSettings();
+-  if (tab.incognito && !settings.trackIncognito) return {};
++  if (tab.incognito && !settings.trackIncognito) return { ok: true };
+   const obs = sanitizeObservation(msg.observation);
+-  if (!obs) return {};
+-  if (settings.ignoredHosts.some((h) => hostMatches(obs.hostname, h))) return {};
++  if (!obs) return { ok: true };
++  if (settings.ignoredHosts.some((h) => hostMatches(obs.hostname, h))) return { ok: true };
++  const senderUrl = sender.url ?? tab.url;
++  if (senderUrl && (!isSafeHttpUrl(senderUrl) || new URL(senderUrl).origin !== new URL(obs.url).origin)) return { ok: true };
+ 
+   const expectation = await takeExpectation(tab.id);
+   if (msg.errorPage && expectation?.sourceId) {
+@@ -59,6 +63,7 @@ async function onObserved(msg: PageObservedMessage, sender: Sender): Promise<Obs
+     result = await persistObservation(obs);
+   } catch (err) {
+     warn("tracking", err);
++    return { ok: false };
+   }
+ 
+   if (result) {
+@@ -74,12 +79,15 @@ async function onObserved(msg: PageObservedMessage, sender: Sender): Promise<Obs
+   if (result) void refreshBadge();
+ 
+   return {
++    ok: true,
+     tracked: result
+       ? {
+           seriesId: result.seriesId,
+           seriesTitle: result.seriesTitle,
+           chapterId: result.chapterId,
+           chapterLabel: result.chapterLabel,
++          progressRevision: result.chapterProgressRevision,
++          progress: result.chapterProgress,
+           created: result.created,
+           restored: result.restored,
+         }
+@@ -95,6 +103,22 @@ async function openUrl(url: string, newTab: boolean, tabId?: number): Promise<nu
+   return (await chrome.tabs.update({ url }))?.id;
+ }
+ 
++async function automaticChapter(chapterId: string, sender: Sender): Promise<Chapter | undefined> {
++  const tab = sender.tab;
++  if (tab?.id === undefined || sender.frameId) return;
++  const settings = await getSettings();
++  if (tab.incognito && !settings.trackIncognito) return;
++  const state = await getTabState(tab.id);
++  if (!state || state.chapterId !== chapterId) return;
++  const host = new URL(state.observation.url).hostname;
++  if (settings.ignoredHosts.some(h => hostMatches(host, h))) return;
++  const senderUrl = sender.url ?? tab.url;
++  if (senderUrl && (!isSafeHttpUrl(senderUrl) || new URL(senderUrl).origin !== new URL(state.observation.url).origin)) return;
++  const chapter = await read(["chapters"], t => t.get<Chapter>("chapters", chapterId));
++  if (!chapter || chapter.seriesId !== state.seriesId) return;
++  return chapter;
++}
++
+ export async function handleMessage(msg: ExtensionMessage, sender: Sender): Promise<unknown> {
+   switch (msg.type) {
+     case "page/observed":
+@@ -102,12 +126,14 @@ export async function handleMessage(msg: ExtensionMessage, sender: Sender): Prom
+ 
+     case "chapter/progress": {
+       if (!isProgressMessage(msg)) return { completed: false };
++      if (!(await automaticChapter(msg.chapterId, sender))) return { completed: false, blocked: true };
+       const settings = await getSettings();
+       const res = await recordProgress(msg.chapterId, {
+         progress: msg.progress,
+         readingTimeDeltaMs: msg.readingTimeDeltaMs,
+         threshold: settings.completionThreshold,
+         final: msg.final,
++        progressRevision: msg.progressRevision,
+       });
+       if (sender.tab?.id) {
+         await patchTabState(sender.tab.id, { progress: res.progress });
+@@ -119,9 +145,14 @@ export async function handleMessage(msg: ExtensionMessage, sender: Sender): Prom
+       return res;
+     }
+ 
++    case "chapter/state": {
++      const c = await automaticChapter(msg.chapterId, sender);
++      return c ? { progress: c.maxProgress, progressRevision: c.progressRevision ?? 0 } : { blocked: true };
++    }
++
+     case "chapter/next-clicked": {
+-      if (typeof msg.chapterId !== "string") return { ok: false };
+-      const done = await completeChapter(msg.chapterId, "next-link");
++      if (typeof msg.chapterId !== "string" || !(await automaticChapter(msg.chapterId, sender))) return { ok: false };
++      const done = await completeChapter(msg.chapterId, "next-link", Date.now(), msg.progressRevision);
+       if (done) publish({ type: "library-changed" });
+       return { ok: done };
+     }
+diff --git a/src/background/update-checker.ts b/src/background/update-checker.ts
+index af2086f..ad437ca 100644
+--- a/src/background/update-checker.ts
++++ b/src/background/update-checker.ts
+@@ -22,9 +22,10 @@ const HOUR = 3_600_000;
+ const MAX_PER_RUN = 8;
+ const SPACING_MS = 1500;
+ const LOCK_KEY = "updates:lock";
++let running = false;
+ 
+ export function isDue(src: SeriesSource, intervalHours: number, now: number): boolean {
+-  if (src.disabled) return false;
++  if (src.disabled || src.removedAt) return false;
+   const backoff = Math.pow(2, Math.min(src.consecutiveFailures ?? 0, 5));
+   return !src.lastCheckedAt || now - src.lastCheckedAt >= intervalHours * HOUR * backoff;
+ }
+@@ -43,7 +44,7 @@ export function planChecks(
+     if (!s || s.removedAt || s.hidden || s.status === "dropped") return false;
+     if (s.status === "completed" && src.storyEnded) return false;
+     if (opts.seriesIds && !opts.seriesIds.includes(s.id)) return false;
+-    if (!isSafeHttpUrl(src.seriesUrl) || src.disabled) return false;
++    if (!isSafeHttpUrl(src.seriesUrl) || src.disabled || src.removedAt) return false;
+     if (!updatesSupported(src)) return false;
+     return opts.force || isDue(src, intervalHours, now);
+   });
+@@ -142,14 +143,19 @@ async function checkSource(src: SeriesSource, siteRules: SiteRule[]): Promise<vo
+ }
+ 
+ export async function runUpdateChecks(opts: { force?: boolean; seriesIds?: string[] } = {}): Promise<number> {
+-  const settings = await getSettings();
+-  if (!settings.updateChecks && !opts.force) return 0;
+-  if (!(await acquireLock())) return 0;
++  if (running) return 0;
++  running = true;
++  let acquired = false;
+   try {
++    const settings = await getSettings();
++    if (!settings.updateChecks && !opts.force) return 0;
++    if (!(await acquireLock())) return 0;
++    acquired = true;
+     const [series, sources] = await Promise.all([listSeries(), listSources()]);
+     const plan = planChecks(series, sources, settings.updateIntervalHours, Date.now(), opts);
+     for (let i = 0; i < plan.length; i++) {
+       if (i > 0) await new Promise((r) => setTimeout(r, SPACING_MS));
++      await chrome.storage.session.set({ [LOCK_KEY]: Date.now() });
+       const src = plan[i]!;
+       await checkSource(src, settings.siteRules);
+       publish({ type: "library-changed", seriesIds: [src.seriesId] });
+@@ -157,8 +163,12 @@ export async function runUpdateChecks(opts: { force?: boolean; seriesIds?: strin
+     await chrome.storage.local.set({ "updates:lastRunAt": Date.now() });
+     return plan.length;
+   } finally {
+-    await chrome.storage.session.remove(LOCK_KEY);
+-    await closeOffscreen();
+-    await refreshBadge();
++    try {
++      if (acquired) {
++        await chrome.storage.session.remove(LOCK_KEY);
++        await closeOffscreen();
++        await refreshBadge();
++      }
++    } finally { running = false; }
+   }
+ }
+diff --git a/src/content/index.ts b/src/content/index.ts
+index 70df01f..e0a0644 100644
+--- a/src/content/index.ts
++++ b/src/content/index.ts
+@@ -6,7 +6,7 @@ import { CONFIDENCE, type PageObservation } from "../detection/types";
+ import { canonicalizeUrl, hostMatches, sourceHost } from "../detection/normalization/url";
+ import { repairSettings } from "../storage/repositories/settings";
+ import type { Settings } from "../shared/types/settings";
+-import type { ContentMessage, ExtensionMessage, ObservedResponse } from "../shared/messages";
++import type { ContentMessage, ExtensionMessage, ObservedResponse, ProgressResponse } from "../shared/messages";
+ import { ReaderProgress } from "./reader-progress";
+ import { watchPage, type PageWatcher } from "./observer";
+ import { showTrackingToast } from "./toast";
+@@ -14,7 +14,11 @@ import { showTrackingToast } from "./toast";
+ let settings: Settings;
+ let progress: ReaderProgress | null = null;
+ let watcher: PageWatcher | null = null;
+-let currentChapter: { id: string; nextUrl?: string } | null = null;
++let currentChapter: { id: string; nextUrl?: string; revision: number } | null = null;
++let retryTimer: ReturnType<typeof setTimeout> | undefined;
++let retryCount = 0;
++let generation = 0;
++let suspended = false;
+ let lastReportKey = "";
+ let running = false;
+ let rerunRequested = false;
+@@ -44,30 +48,55 @@ function isErrorPage(): boolean {
+   return /\b(?:404|page not found|not found|doesn['’]t exist|no longer available)\b/i.test(t);
+ }
+ 
+-function stopProgress(): void {
+-  progress?.stop(true);
++function stopProgress(discard = false): void {
++  progress?.stop(true, discard);
+   progress = null;
+   currentChapter = null;
+ }
+ 
+-function startProgress(chapterId: string, nextUrl?: string): void {
++function startProgress(chapterId: string, nextUrl?: string, revision = 0, value = 0): void {
+   if (currentChapter?.id === chapterId && progress) return;
+   stopProgress();
+-  currentChapter = { id: chapterId, nextUrl };
++  const chapter = { id: chapterId, nextUrl, revision };
++  currentChapter = chapter;
+   const url = new URL(location.href);
+   let container: HTMLElement | null = null;
+   progress = new ReaderProgress(
+     () => (container && container.isConnected ? container : (container = readerContainerFor(document, url, { siteRules: settings.siteRules }))),
+     settings.completionThreshold,
+-    (u) => void send({ type: "chapter/progress", chapterId, ...u }),
++    (u) => {
++      if (!allowed()) return;
++      void send<ProgressResponse & { blocked?: boolean }>({ type: "chapter/progress", chapterId, ...u, progressRevision: chapter.revision }).then(res => {
++        if (currentChapter !== chapter) return;
++        if (res?.blocked) stopProgress(true);
++        else if (res?.stale) { chapter.revision = res.progressRevision; progress?.reset(res.progress); }
++      });
++    },
+     () => pagedProgressFor(document, new URL(location.href), { siteRules: settings.siteRules }),
+   );
++  if (revision > 0 || value > 0) progress.reset(value);
+   progress.start();
+ }
+ 
++function allowed(): boolean {
++  return !!settings && !suspended && alive() && !(chrome.extension?.inIncognitoContext && !settings.trackIncognito) && !settings.ignoredHosts.some(h => hostMatches(sourceHost(location.href), h));
++}
++
++async function reconcileProgress(): Promise<void> {
++  const chapter = currentChapter;
++  if (!chapter || !allowed()) return;
++  const res = await send<{ progress?: number; progressRevision?: number; blocked?: boolean }>({ type: "chapter/state", chapterId: chapter.id });
++  if (currentChapter !== chapter) return;
++  if (res?.blocked) stopProgress(true);
++  else if (res?.progressRevision !== undefined && res.progressRevision !== chapter.revision) {
++    chapter.revision = res.progressRevision;
++    progress?.reset(res.progress ?? 0);
++  }
++}
++
+ /** Clicking the detected "next chapter" link is strong evidence the current chapter is finished. */
+ function onClick(ev: MouseEvent): void {
+-  if (!currentChapter?.nextUrl) return;
++  if (!allowed() || !currentChapter?.nextUrl) return;
+   const a = (ev.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+   if (!a) return;
+   let href: string;
+@@ -76,16 +105,19 @@ function onClick(ev: MouseEvent): void {
+   } catch {
+     return;
+   }
+-  if (href === currentChapter.nextUrl) void send({ type: "chapter/next-clicked", chapterId: currentChapter.id });
++  if (href === currentChapter.nextUrl) void send({ type: "chapter/next-clicked", chapterId: currentChapter.id, progressRevision: currentChapter.revision });
+ }
+ 
+ async function run(): Promise<void> {
++  if (!allowed()) { stopProgress(true); return; }
+   if (running) {
+     // A route change or late content arrived mid-report: run once more afterwards.
+     rerunRequested = true;
+     return;
+   }
+   running = true;
++  const version = generation;
++  const visitedUrl = location.href;
+   try {
+     const url = new URL(location.href);
+     if (!mightBeReadingPage(document, url, settings.siteRules)) {
+@@ -97,11 +129,21 @@ async function run(): Promise<void> {
+     const key = `${obs.url}|${obs.kind}|${obs.chapter?.label ?? ""}|${obs.series?.title ?? ""}|${obs.series?.chapterList.length ?? 0}|${Math.round(obs.confidence * 10)}`;
+     watcher?.settle(obs.confidence >= CONFIDENCE.track && (obs.kind !== "series" || (obs.series?.chapterList.length ?? 0) > 0));
+     if (key === lastReportKey) return;
+-    lastReportKey = key;
+-
+     const res = await send<ObservedResponse>({ type: "page/observed", observation: obs, errorPage: obs.kind === "unknown" && isErrorPage() });
+-    const tracked = res?.tracked;
+-    if (tracked?.chapterId && obs.kind === "chapter") startProgress(tracked.chapterId, res?.nextUrl);
++    if (generation !== version || location.href !== visitedUrl || !allowed()) return;
++    if (!res || res.ok === false) {
++      if (retryCount < 5 && !retryTimer) {
++        const delay = Math.min(30_000, 1000 * 2 ** retryCount++);
++        retryTimer = setTimeout(() => { retryTimer = undefined; void run(); }, delay);
++      }
++      return;
++    }
++    lastReportKey = key;
++    retryCount = 0;
++    if (retryTimer) clearTimeout(retryTimer);
++    retryTimer = undefined;
++    const tracked = res.tracked;
++    if (tracked?.chapterId && obs.kind === "chapter") startProgress(tracked.chapterId, res.nextUrl, tracked.progressRevision ?? 0, tracked.progress ?? 0);
+     else if (obs.kind !== "chapter") stopProgress();
+     if (tracked && res?.showToast) {
+       const verb = tracked.restored ? "Tracking again" : "Tracking";
+@@ -117,7 +159,10 @@ async function run(): Promise<void> {
+ }
+ 
+ function shutdown(): void {
+-  stopProgress();
++  generation++;
++  if (retryTimer) clearTimeout(retryTimer);
++  retryTimer = undefined;
++  stopProgress(true);
+   watcher?.stop();
+   watcher = null;
+   removeEventListener("click", onClick, true);
+@@ -127,20 +172,31 @@ async function init(): Promise<void> {
+   if (!/^https?:$/.test(location.protocol) || window.top !== window) return;
+   const stored = await chrome.storage.local.get("settings").catch(() => ({}) as Record<string, unknown>);
+   settings = repairSettings((stored as Record<string, unknown>).settings);
+-  if (chrome.extension?.inIncognitoContext && !settings.trackIncognito) return;
+-  if (settings.ignoredHosts.some((h) => hostMatches(sourceHost(location.href), h))) return;
+-
+-  addEventListener("click", onClick, true);
+-  watcher = watchPage((reason) => {
+-    // Progress keeps running across URL changes within one chapter (e.g. /chapter/x/2 on
+-    // paged readers); run() stops or replaces it once the new page is identified.
+-    if (reason === "url") lastReportKey = "";
++  function observe(): void {
++    if (!allowed()) return;
++    addEventListener("click", onClick, true);
++    watcher ??= watchPage((reason) => {
++      if (reason === "url") { lastReportKey = ""; retryCount = 0; generation++; }
++      void run();
++    });
+     void run();
++  }
++  addEventListener("pagehide", () => {
++    suspended = true;
++    stopProgress();
++    shutdown();
++  });
++  addEventListener("pageshow", () => {
++    suspended = false;
++    lastReportKey = "";
++    retryCount = 0;
++    observe();
+   });
+ 
+   chrome.runtime.onMessage.addListener((msg: ContentMessage, _sender, sendResponse) => {
+     if (msg?.type === "content/redetect") {
+       lastReportKey = "";
++      retryCount = 0;
+       void run().then(() => sendResponse({ ok: true }));
+       return true;
+     }
+@@ -150,11 +206,16 @@ async function init(): Promise<void> {
+   chrome.storage.onChanged.addListener((changes, area) => {
+     if (area === "local" && changes.settings) {
+       settings = repairSettings(changes.settings.newValue);
++      generation++;
+       lastReportKey = "";
++      retryCount = 0;
++      if (!allowed()) shutdown();
++      else { stopProgress(true); observe(); }
+     }
++    if (area === "local" && changes["reading:revision"]) void reconcileProgress();
+   });
+ 
+-  await run();
++  observe();
+ }
+ 
+ void init();
+diff --git a/src/content/reader-progress.ts b/src/content/reader-progress.ts
+index 0f91574..46f48f8 100644
+--- a/src/content/reader-progress.ts
++++ b/src/content/reader-progress.ts
+@@ -19,7 +19,9 @@ export class ReaderProgress {
+   private lastSend = 0;
+   private scrollQueued = false;
+   private timer: ReturnType<typeof setInterval> | undefined;
+-  private stopped = false;
++  private stopped = true;
++  private measureTimer: ReturnType<typeof setTimeout> | undefined;
++  private completionBlocked = false;
+ 
+   constructor(
+     private readonly getContainer: () => HTMLElement | null,
+@@ -30,6 +32,9 @@ export class ReaderProgress {
+   ) {}
+ 
+   start(): void {
++    if (!this.stopped) return;
++    this.stopped = false;
++    this.lastActivity = Date.now();
+     addEventListener("scroll", this.onScroll, { passive: true });
+     for (const ev of ["mousemove", "keydown", "touchstart", "wheel", "click"]) addEventListener(ev, this.onActivity, { passive: true });
+     document.addEventListener("visibilitychange", this.onVisibility);
+@@ -39,7 +44,7 @@ export class ReaderProgress {
+   }
+ 
+   /** Stops tracking and flushes remaining progress/time. */
+-  stop(final = true): void {
++  stop(final = true, discard = false): void {
+     if (this.stopped) return;
+     this.stopped = true;
+     removeEventListener("scroll", this.onScroll);
+@@ -47,23 +52,41 @@ export class ReaderProgress {
+     document.removeEventListener("visibilitychange", this.onVisibility);
+     removeEventListener("pagehide", this.onPageHide);
+     if (this.timer) clearInterval(this.timer);
+-    this.flush(final);
++    if (this.measureTimer) clearTimeout(this.measureTimer);
++    this.timer = undefined;
++    this.measureTimer = undefined;
++    this.scrollQueued = false;
++    if (!discard) this.flush(final);
++    this.pendingTimeMs = 0;
+   }
+ 
+   get progress(): number {
+     return this.maxProgress;
+   }
+ 
++  /** Reconcile an explicit user correction without treating the old scroll position as new reading. */
++  reset(value: number): void {
++    this.maxProgress = this.sentProgress = Math.max(0, Math.min(1, value));
++    this.pendingTimeMs = 0;
++    const position = this.getPagedProgress() ?? this.scrollProgress();
++    this.completionBlocked = value < this.threshold && position >= this.threshold;
++  }
++
+   private isActive(): boolean {
+-    return document.visibilityState === "visible" && Date.now() - this.lastActivity < IDLE_AFTER_MS;
++    if (this.stopped || document.visibilityState !== "visible" || !document.hasFocus() || Date.now() - this.lastActivity >= IDLE_AFTER_MS) return false;
++    const el = this.getContainer();
++    if (!el || !el.isConnected) return true;
++    const r = el.getBoundingClientRect();
++    return r.bottom > 0 && r.top < innerHeight;
+   }
+ 
+   private onActivity = () => {
++    if (this.stopped) return;
+     this.lastActivity = Date.now();
+     // Paged readers flip pages on click/keys without scrolling.
+     if (!this.scrollQueued) {
+       this.scrollQueued = true;
+-      setTimeout(() => {
++      this.measureTimer = setTimeout(() => {
+         this.scrollQueued = false;
+         this.measure();
+       }, 300);
+@@ -71,10 +94,11 @@ export class ReaderProgress {
+   };
+ 
+   private onScroll = () => {
++    if (this.stopped) return;
+     this.lastActivity = Date.now();
+     if (this.scrollQueued) return;
+     this.scrollQueued = true;
+-    setTimeout(() => {
++    this.measureTimer = setTimeout(() => {
+       this.scrollQueued = false;
+       this.measure();
+     }, 250);
+@@ -88,14 +112,20 @@ export class ReaderProgress {
+   private onPageHide = () => this.stop(true);
+ 
+   private tick = () => {
++    if (this.stopped) return;
+     if (this.isActive()) this.pendingTimeMs += TICK_MS;
+     this.measure();
+     if (Date.now() - this.lastSend >= SEND_EVERY_MS && (this.pendingTimeMs > 0 || this.maxProgress - this.sentProgress >= 0.02)) this.flush(false);
+   };
+ 
+   private measure(): void {
++    if (this.stopped) return;
+     let p = this.getPagedProgress() ?? this.scrollProgress();
+     p = Math.max(0, Math.min(1, p));
++    if (this.completionBlocked) {
++      if (p >= this.threshold) return;
++      this.completionBlocked = false;
++    }
+     if (p > this.maxProgress) {
+       const crossed = this.maxProgress < this.threshold && p >= this.threshold;
+       this.maxProgress = p;
+diff --git a/src/shared/messages.ts b/src/shared/messages.ts
+index 1cb58ab..23fc9e2 100644
+--- a/src/shared/messages.ts
++++ b/src/shared/messages.ts
+@@ -17,11 +17,13 @@ export interface ChapterProgressMessage {
+   chapterId: string;
+   progress: number;
+   readingTimeDeltaMs: number;
++  progressRevision?: number;
+   final?: boolean;
+ }
+ export interface ChapterNextClickedMessage {
+   type: "chapter/next-clicked";
+   chapterId: string;
++  progressRevision?: number;
+ }
+ export interface UndoTrackMessage {
+   type: "track/undo";
+@@ -69,6 +71,7 @@ export interface NotificationsChangedMessage {
+ export type ExtensionMessage =
+   | PageObservedMessage
+   | ChapterProgressMessage
++  | { type: "chapter/state"; chapterId: string }
+   | ChapterNextClickedMessage
+   | UndoTrackMessage
+   | ContinueMessage
+@@ -93,12 +96,22 @@ export interface OffscreenParseMessage {
+ }
+ 
+ // ---- responses
++export interface ProgressResponse {
++  completed: boolean;
++  progress: number;
++  progressRevision: number;
++  stale?: boolean;
++}
++
+ export interface ObservedResponse {
++  ok?: boolean;
+   tracked?: {
+     seriesId: string;
+     seriesTitle: string;
+     chapterId?: string;
+     chapterLabel?: string;
++    progressRevision?: number;
++    progress?: number;
+     created: boolean;
+     restored: boolean;
+   };
+@@ -138,7 +151,7 @@ export function sanitizeObservation(raw: unknown): PageObservation | null {
+   if (!url || !kinds.includes(o.kind as string) || !isNum(o.confidence)) return null;
+   const obs: PageObservation = {
+     url,
+-    hostname: cleanText(o.hostname, 255) ?? "",
++    hostname: new URL(url).hostname.replace(/^www\./, ""),
+     kind: o.kind as PageObservation["kind"],
+     confidence: Math.max(0, Math.min(1, o.confidence)),
+     evidence: Array.isArray(o.evidence)
+@@ -187,7 +200,7 @@ export function sanitizeObservation(raw: unknown): PageObservation | null {
+ }
+ 
+ export function isProgressMessage(m: ExtensionMessage): m is ChapterProgressMessage {
+-  return m.type === "chapter/progress" && isStr(m.chapterId, 64) && isNum(m.progress) && isNum(m.readingTimeDeltaMs);
++  return m.type === "chapter/progress" && isStr(m.chapterId, 64) && isNum(m.progress) && isNum(m.readingTimeDeltaMs) && m.progress >= 0 && m.progress <= 1 && m.readingTimeDeltaMs >= 0 && (m.progressRevision === undefined || (Number.isInteger(m.progressRevision) && m.progressRevision >= 0));
+ }
+ 
+ export function sendToWorker<R = unknown>(msg: ExtensionMessage): Promise<R | undefined> {
+
+NEW src/storage/cover-status.ts
+// Recoverable download diagnostics, stored locally alongside metadata. Not user history.
+import { read, write } from './db';
+import type { MetaRecord } from '../shared/types/models';
+
+export interface CoverStatus {
+  state: 'pending' | 'failed' | 'ready';
+  url: string;
+  attemptedAt: number;
+  error?: string;
+  retryAfter?: number;
+}
+const key = (seriesId: string) => `cover-status:${seriesId}`;
+export async function getCoverStatus(seriesId: string): Promise<CoverStatus | undefined> {
+  return read(['meta'], async t => (await t.get<MetaRecord<CoverStatus>>('meta', key(seriesId)))?.value);
+}
+export async function setCoverStatus(seriesId: string, status: CoverStatus): Promise<void> {
+  await write(['meta'], async t => { await t.put('meta', {key:key(seriesId), value:{...status,version:1}}); });
+}
+
+NEW tests/background/privacy.test.ts
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { useDatabase } from "../../src/storage/db";
+import { handleMessage } from "../../src/background/messages";
+import { trackChapterOpened } from "../../src/storage/tracking";
+import { listChapters } from "../../src/storage/repositories/chapters";
+import { saveSettings } from "../../src/storage/repositories/settings";
+import { chapterObs, SL, slChapter } from "../helpers/obs";
+import { setTabState } from "../../src/background/tabs";
+let data: Record<string, unknown>;
+beforeEach(() => {
+  useDatabase(`privacy-${crypto.randomUUID()}`); data = {};
+  const kv = { get: async (k: string) => ({[k]:data[k]}), set: async (values:Record<string,unknown>)=>Object.assign(data, values), remove:async(k:string)=>{ delete data[k] } };
+  vi.stubGlobal('chrome',{storage:{local:kv,session:kv},tabs:{query:async()=>[]},action:{setBadgeBackgroundColor:async()=>{},setBadgeText:async()=>{}}});
+});
+afterEach(() => vi.unstubAllGlobals());
+async function visit(incognito = false){
+  const obs=chapterObs({title:'Solo Leveling',seriesUrl:SL,label:'Chapter 31',url:slChapter(31),next:slChapter(32)});
+  const r=(await trackChapterOpened(obs))!;
+  await setTabState({tabId:7,observation:obs,seriesId:r.seriesId,chapterId:r.chapterId,updatedAt:Date.now()});
+  return {r,sender:{tab:{id:7,incognito,url:slChapter(31)},frameId:0} as chrome.runtime.MessageSender};
+}
+it('rejects progress after incognito tracking is disabled',async()=>{
+  const {r,sender}=await visit(true);await saveSettings({trackIncognito:false});
+  await handleMessage({type:'chapter/progress',chapterId:r.chapterId!,progress:1,readingTimeDeltaMs:10_000},sender);
+  const c=(await listChapters(r.seriesId)).find(c=>c.id===r.chapterId)!;expect(c.maxProgress).toBe(0);expect(c.readingTimeMs).toBe(0);expect(c.completedAt).toBeUndefined();
+});
+it('rejects next-link completion on ignored hosts',async()=>{
+  const {r,sender}=await visit();await saveSettings({ignoredHosts:['example-scans.com']});
+  await handleMessage({type:'chapter/next-clicked',chapterId:r.chapterId!},sender);
+  expect((await listChapters(r.seriesId)).find(c=>c.id===r.chapterId)!.completedAt).toBeUndefined();
+});
+it('rejects a content message for another tab chapter',async()=>{
+  const {r,sender}=await visit();const other=(await trackChapterOpened(chapterObs({title:'Solo Leveling',seriesUrl:SL,label:'Chapter 32',url:slChapter(32)})))!;
+  await handleMessage({type:'chapter/progress',chapterId:other.chapterId!,progress:1,readingTimeDeltaMs:10000},sender);
+  expect((await listChapters(r.seriesId)).find(c=>c.id===other.chapterId)!.completedAt).toBeUndefined();
+});
+
+NEW tests/background/update-lock.test.ts
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
+import { useDatabase } from '../../src/storage/db';
+import { trackSeriesPage } from '../../src/storage/tracking';
+import { seriesObs } from '../helpers/obs';
+import { runUpdateChecks } from '../../src/background/update-checker';
+vi.mock('../../src/background/net',()=>({fetchText:async()=>({ok:false,status:503,text:'',finalUrl:'',redirected:false})}));
+vi.mock('../../src/background/offscreen',()=>({closeOffscreen:async()=>{},parseInOffscreen:async()=>null}));
+let data:Record<string,unknown>;
+beforeEach(()=>{
+ useDatabase(`lock-${crypto.randomUUID()}`);data={};
+ const kv={get:async(k:string)=>({...{[k]:data[k]}}),set:async(v:Record<string,unknown>)=>Object.assign(data,v),remove:async(k:string)=>{delete data[k]}};
+ vi.stubGlobal('chrome',{storage:{local:kv,session:kv},action:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}});
+});
+afterEach(()=>vi.unstubAllGlobals());
+it('concurrent manual and alarm runs check a source only once',async()=>{
+ const r=(await trackSeriesPage(seriesObs({title:'Solo Leveling',url:'https://example-scans.com/manga/solo-leveling/'})))!;
+ const results=await Promise.all([runUpdateChecks({force:true,seriesIds:[r.seriesId]}),runUpdateChecks({force:true,seriesIds:[r.seriesId]})]);
+ expect(results.sort()).toEqual([0,1]);
+});
+it('preserves a restart-safe active lease and recovers an expired lease',async()=>{
+ const r=(await trackSeriesPage(seriesObs({title:'Solo Leveling',url:'https://example-scans.com/manga/solo-leveling/'})))!;
+ data['updates:lock']=Date.now();expect(await runUpdateChecks({force:true,seriesIds:[r.seriesId]})).toBe(0);
+ data['updates:lock']=Date.now()-6*60_000;expect(await runUpdateChecks({force:true,seriesIds:[r.seriesId]})).toBe(1);
+});
+
+NEW tests/background/covers.test.ts
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
+import { useDatabase, closeDb } from '../../src/storage/db';
+import { trackSeriesPage } from '../../src/storage/tracking';
+import { seriesObs } from '../helpers/obs';
+import { cacheDetectedCover, refreshCover } from '../../src/background/covers';
+import { clearDetectedCovers } from '../../src/storage/repositories/covers';
+import { getCoverStatus, setCoverStatus } from '../../src/storage/cover-status';
+const network = vi.hoisted(()=>({fail:true,requests:0}));
+vi.mock('../../src/background/net',()=>({fetchImage:async()=>{network.requests++;if(network.fail)throw Error('HTTP 403');return new Blob(['image'],{type:'image/png'})}}));
+beforeEach(()=>{useDatabase(`covers-${crypto.randomUUID()}`);network.fail=true;network.requests=0});
+afterEach(()=>vi.restoreAllMocks());
+const url='https://example-scans.com/cover.png';
+async function makeSeries(){return (await trackSeriesPage(seriesObs({title:'Solo Leveling',url:'https://example-scans.com/manga/solo-leveling/'})))!.seriesId}
+it('persists a cover download failure and conservatively retries on manual refresh',async()=>{
+ const id=await makeSeries();await cacheDetectedCover(id,url);await closeDb();const state=await getCoverStatus(id);
+ expect(state?.state).toBe('failed');expect(state?.url).toBe(url);expect(state?.error).toContain('Cover could not be downloaded');
+ await cacheDetectedCover(id,url);expect(network.requests).toBe(1);
+ network.fail=false;expect(await refreshCover(id,url)).toEqual({ok:true});expect((await getCoverStatus(id))?.state).toBe('ready');
+});
+it('recovers a cover download interrupted by worker termination',async()=>{
+ const id=await makeSeries();await setCoverStatus(id,{state:'pending',url,attemptedAt:Date.now()-3*60_000});network.fail=false;
+ await cacheDetectedCover(id,url);expect((await getCoverStatus(id))?.state).toBe('ready');expect(network.requests).toBe(1);
+});
+
+it('rebuilds cleared cover blobs despite a previous successful diagnostic',async()=>{
+ const id=await makeSeries();network.fail=false;await cacheDetectedCover(id,url);await clearDetectedCovers();
+ await cacheDetectedCover(id,url);expect(network.requests).toBe(2);
+});
+
+NEW tests/content/reader-progress.test.ts
+// @vitest-environment jsdom
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ReaderProgress, type ProgressSink } from "../../src/content/reader-progress";
+
+let active = true;
+let bottom = 200;
+let tracker: ReaderProgress;
+let container: HTMLElement;
+let sink: ReturnType<typeof vi.fn<ProgressSink>>;
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.spyOn(document, "hasFocus").mockImplementation(() => active);
+  active = true;
+  bottom = 200;
+  document.body.innerHTML = '<div id="reader"></div>';
+  container = document.querySelector('#reader')!;
+  container.getBoundingClientRect = () => ({ top: -bottom, bottom: 6000 - bottom, height: 6000, width: 600, left: 0, right: 600, x: 0, y: -bottom, toJSON() {} });
+  sink = vi.fn<ProgressSink>();
+  tracker = new ReaderProgress(() => container, .85, sink);
+});
+afterEach(() => { tracker.stop(false); vi.useRealTimers(); vi.restoreAllMocks(); });
+it('does not count reading time while the browser window is unfocused', () => {
+  tracker.start(); active = false; vi.advanceTimersByTime(20_000);
+  tracker.stop();
+  expect(sink.mock.calls.reduce((sum, [u]) => sum + u.readingTimeDeltaMs, 0)).toBe(0);
+});
+it('does not count reading time outside the meaningful reader', () => {
+  bottom = -8000; tracker.start(); vi.advanceTimersByTime(20_000); tracker.stop();
+  expect(sink.mock.calls.reduce((sum, [u]) => sum + u.readingTimeDeltaMs, 0)).toBe(0);
+});
+it('cancels queued measurements when the chapter tracker stops', () => {
+  tracker.start(); window.dispatchEvent(new Event('scroll')); tracker.stop(); const calls = sink.mock.calls.length;
+  bottom = 5500; vi.advanceTimersByTime(500);
+  expect(sink.mock.calls.length).toBe(calls);
+});
+it('can restart after pagehide and measures only its new active lifetime', () => {
+  tracker.start(); window.dispatchEvent(new Event('pagehide')); tracker.start(); vi.advanceTimersByTime(10_000);
+  expect(sink.mock.calls.some(([u]) => u.readingTimeDeltaMs > 0)).toBe(true);
+});
+
+it('manual unread at the old end position cannot immediately re-complete', () => {
+  bottom = 5500; tracker.reset(0); tracker.start(); vi.advanceTimersByTime(10_000);
+  expect(sink.mock.calls.every(([u]) => u.progress < .85)).toBe(true);
+  bottom = 200; window.dispatchEvent(new Event('scroll')); vi.advanceTimersByTime(300);
+  bottom = 5500; window.dispatchEvent(new Event('scroll')); vi.advanceTimersByTime(300);
+  expect(sink.mock.calls.some(([u]) => u.progress >= .85)).toBe(true);
+});
+
+NEW tests/content/lifecycle.test.ts
+// @vitest-environment jsdom
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
+import { chapterObs, SL, slChapter } from '../helpers/obs';
+import { DEFAULT_SETTINGS } from '../../src/shared/types/settings';
+import type { ContentMessage } from '../../src/shared/messages';
+const state = vi.hoisted(() => ({ starts: 0, discarded: 0, stops: 0, detect: undefined as undefined | (()=>void) }));
+vi.mock('../../src/content/reader-progress',()=>({ReaderProgress:class {start(){state.starts++}stop(_final:boolean,discard:boolean){state.stops++;if(discard)state.discarded++}reset(){}}}));
+vi.mock('../../src/content/observer',()=>({watchPage:(run:()=>void)=>{state.detect=run;return {stop(){},settle(){}}}}));
+vi.mock('../../src/detection',async()=>({detectPage:()=>chapterObs({title:'Solo Leveling',seriesUrl:SL,label:'Chapter 31',url:slChapter(31)}),mightBeReadingPage:()=>true,readerContainerFor:()=>null,pagedProgressFor:()=>null}));
+let onSettings: (c: Record<string, chrome.storage.StorageChange>, area:string)=>void;
+let onMessage: (m:ContentMessage, sender:unknown, reply:()=>void)=>unknown;
+let attempts:number, failOnce:boolean;
+let handlers: { type: string; listener: EventListenerOrEventListenerObject }[];
+let stored:typeof DEFAULT_SETTINGS;
+beforeEach(async()=>{
+  vi.resetModules();vi.useFakeTimers();handlers=[];
+  const add=window.addEventListener.bind(window);
+  vi.spyOn(window, "addEventListener").mockImplementation((type,listener,options)=>{handlers.push({type,listener});add(type,listener,options)});Object.assign(state,{starts:0,discarded:0,stops:0,detect:undefined});attempts=0;failOnce=false;stored={...DEFAULT_SETTINGS,showTrackingToast:false};
+  vi.stubGlobal('chrome',{runtime:{id:'test',sendMessage:async(m:{type:string})=>{if(m.type==='page/observed'){attempts++;if(failOnce){failOnce=false;throw Error('worker restarting')}return {ok:true,tracked:{chapterId:'c',seriesId:'s',seriesTitle:'Solo Leveling',created:false,restored:false,progressRevision:0,progress:0}}}return {}},onMessage:{addListener:(fn:typeof onMessage)=>{onMessage=fn}}},extension:{inIncognitoContext:true},storage:{local:{get:async()=>({settings:stored})},onChanged:{addListener:(fn:typeof onSettings)=>{onSettings=fn}}}});
+});
+afterEach(()=>{window.dispatchEvent(new Event('pagehide'));for(const h of handlers)window.removeEventListener(h.type,h.listener);vi.useRealTimers();vi.restoreAllMocks();vi.unstubAllGlobals()});
+const settle=async()=>{for(let i=0;i<12;i++)await Promise.resolve()};
+it('retries a detection after a transient worker failure',async()=>{
+  stored.trackIncognito=true;failOnce=true;await import('../../src/content/index');await settle();await vi.advanceTimersByTimeAsync(3000);await settle();
+  expect(attempts).toBeGreaterThan(1);expect(state.starts).toBe(1);
+});
+it('stops active tracking without flushing when preferences revoke access',async()=>{
+  stored.trackIncognito=true;await import('../../src/content/index');await settle();
+  onSettings({settings:{newValue:{...stored,trackIncognito:false}}},'local');await settle();
+  expect(state.discarded).toBe(1);
+});
+it('can enable tracking after initially disabled incognito startup',async()=>{
+  await import('../../src/content/index');await settle();
+  expect(state.starts).toBe(0);expect(typeof onSettings).toBe('function');
+  onSettings({settings:{newValue:{...stored,trackIncognito:true}}},'local');await settle();expect(state.starts).toBe(1);
+});
+it('restarts detection on restored pages',async()=>{
+  stored.trackIncognito=true;await import('../../src/content/index');await settle();window.dispatchEvent(new Event('pagehide'));window.dispatchEvent(new Event('pageshow'));await settle();
+  expect(attempts).toBe(2);expect(state.starts).toBe(2);
+});
