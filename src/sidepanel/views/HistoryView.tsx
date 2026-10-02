@@ -6,6 +6,7 @@ import { clearAllHistory, clearSeriesHistory, deleteEvent, listEvents } from "..
 import { dayHeading, percent, startOfDay, timeOfDay } from "../../shared/utils/format";
 import { subscribe } from "../../shared/bus";
 import { Dialog } from "../../ui/Menu";
+import { useToast } from "../../ui/toasts";
 import { Icon } from "../../ui/icons";
 
 const PAGE = 150;
@@ -27,11 +28,14 @@ export function eventText(e: ReadingEvent): string {
 }
 
 export function EventList({ seriesId, byId, onOpenSeries }: { seriesId?: string; byId?: Map<string, Series>; onOpenSeries?: (id: string) => void }) {
+  const toast = useToast();
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(false);
   const [events, setEvents] = useState<ReadingEvent[]>([]);
   const [limit, setLimit] = useState(PAGE);
   const [confirm, setConfirm] = useState(false);
 
-  const load = useCallback(async () => setEvents(await listEvents({ seriesId, limit: limit + 1 })), [seriesId, limit]);
+  const load = useCallback(async () => { try { setEvents(await listEvents({ seriesId, limit: limit + 1 })); setError(false); } catch { setError(true); } finally { setLoaded(true); } }, [seriesId, limit]);
   useEffect(() => {
     void load();
     return subscribe((m) => m.type === "library-changed" && void load());
@@ -41,7 +45,7 @@ export function EventList({ seriesId, byId, onOpenSeries }: { seriesId?: string;
   let lastDay = -1;
   return (
     <>
-      {shown.length === 0 ? (
+      {!loaded ? <p role="status">Opening reading history…</p> : error ? <p role="alert">Reading history could not be opened. <button className="btn sm" onClick={() => void load()}>Retry</button></p> : shown.length === 0 ? (
         <p className="muted small">No reading history{seriesId ? " for this series" : ""}.</p>
       ) : (
         <ul className="events">
@@ -54,18 +58,15 @@ export function EventList({ seriesId, byId, onOpenSeries }: { seriesId?: string;
               header,
               <li className="e" key={e.id}>
                 <span className="faint tabular">{timeOfDay(e.timestamp)}</span>
-                <span className="truncate">
-                  {eventText(e)}
+                <span className="event-description">
+                  <span className="truncate" title={eventText(e)}>{eventText(e)}</span>
                   {series && !seriesId && (
-                    <>
-                      {" · "}
-                      <button className="btn ghost sm" style={{ padding: 0, height: "auto" }} onClick={() => onOpenSeries?.(series.id)}>{series.title}</button>
-                    </>
+                    <button className="btn ghost sm event-series" title={series.title} onClick={() => onOpenSeries?.(series.id)}>{series.title}</button>
                   )}
                 </span>
                 <button className="icon-btn" style={{ width: 22, height: 22 }} aria-label="Delete this event" onClick={async () => {
-                  await deleteEvent(e.id);
-                  void load();
+                  if (!window.confirm("Delete this reading event? Chapter progress will be kept.")) return;
+                  try { await deleteEvent(e.id); void load(); } catch { toast.show("Could not delete this event.", { error: true }); }
                 }}>
                   <Icon name="close" />
                 </button>
@@ -89,9 +90,7 @@ export function EventList({ seriesId, byId, onOpenSeries }: { seriesId?: string;
             <button
               className="btn danger solid"
               onClick={async () => {
-                await (seriesId ? clearSeriesHistory(seriesId) : clearAllHistory());
-                setConfirm(false);
-                void load();
+                try { await (seriesId ? clearSeriesHistory(seriesId) : clearAllHistory()); setConfirm(false); void load(); } catch { toast.show("Could not clear reading history.", { error: true }); }
               }}
             >
               Clear history
