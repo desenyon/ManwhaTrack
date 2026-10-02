@@ -111,6 +111,8 @@ export interface SeriesSource {
   lastError?: string;
 
   adapterId?: string;
+  /** Removed from active reading, retained for historical identity. */
+  removedAt?: number;
   /** Disables update checks for this source only. */
   disabled: boolean;
 
@@ -120,10 +122,24 @@ export interface SeriesSource {
 
 export type CompletionSource = "progress" | "next-link" | "manual" | "import";
 
+/** Latest viewport position, independent of furthest progress and completion. */
+export interface ReadingPosition {
+  version: 1;
+  capturedAt: number;
+  progressRevision: number;
+  readerOffset: number;
+  readerHeight: number;
+  viewportHeight: number;
+  imageIndex?: number;
+  imageOffset?: number;
+}
+
 export interface Chapter {
   id: string;
   seriesId: string;
   sourceId: string;
+  /** Explicit series/source correction; detection must preserve this association. */
+  associationOverridden?: boolean;
   /** Stable per-source identity: derived from the parsed chapter label. */
   key: string;
 
@@ -145,6 +161,9 @@ export interface Chapter {
   completedAt?: number;
   completionSource?: CompletionSource;
 
+  /** Invalidates automatic observations after manual progress changes. Legacy value is 0. */
+  progressRevision?: number;
+  readingPosition?: ReadingPosition;
   visitCount: number;
   maxProgress: number;
   readingTimeMs: number;
