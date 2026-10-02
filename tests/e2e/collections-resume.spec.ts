@@ -41,8 +41,13 @@ test("latest reader position resumes after Chrome restart without fake completio
     await ctx.close();session=await launch(dir);ctx=session.ctx;ext=session.ext;
     const reopened=await ctx.newPage();await reopened.goto(`${ext}/sidepanel.html`);
     await expect(reopened.locator(".srow")).toBeVisible();
-    const [resumed]=await Promise.all([ctx.waitForEvent("page"),reopened.locator(".srow .btn.primary").click({modifiers:["ControlOrMeta"]})]);
+    const [resumed]=await Promise.all([ctx.waitForEvent("page"),reopened.locator(".srow .btn.primary").click()]);
     await resumed.waitForURL(/chapter-5/);
+    const worker = ctx.serviceWorkers()[0]!;
+    expect(await worker.evaluate(async () => {
+      const tabs = await chrome.tabs.query({});
+      return tabs.find(t => t.url?.includes("chapter-5"))?.windowId !== tabs.find(t => t.url?.endsWith("sidepanel.html"))?.windowId;
+    })).toBe(true);
     await expect.poll(async()=>resumed.evaluate(saved=>Math.abs(scrollY-saved),position),{timeout:15_000}).toBeLessThan(4);
     await resumed.waitForTimeout(2200);
     const after=(await records(reopened,"chapters")).find(c=>c.id===before.id)!;
@@ -79,7 +84,14 @@ test("custom lists, tags, backup and expanded library survive full profile resta
     await panel.locator(".srow").click();await panel.getByLabel("Add tag",{exact:true}).fill("Read on Fridays");await panel.getByLabel("Add tag",{exact:true}).press("Enter");await expect(panel.getByRole("button",{name:"Remove tag Read on Fridays"})).toBeVisible();
     await panel.keyboard.press("Escape");
     const [full]=await Promise.all([ctx.waitForEvent("page"),panel.getByRole("button",{name:"Expand library",exact:true}).click()]);await full.waitForURL(/library.html/);await expect(full.locator(".library-rail")).toBeVisible();
-    await full.getByRole("complementary").getByRole("button",{name:/Read weekly/}).click();await expect(full.locator(".srow")).toHaveCount(1);
+    await expect(full.getByRole("button", {name:"Show as list"})).toBeVisible();
+    await expect(panel.getByRole("button", {name:"Show as grid"})).toBeVisible();
+    await full.getByRole("button", {name:"Show as list"}).click();
+    await full.reload(); await expect(full.locator(".srow")).toHaveCount(1);
+    await full.getByRole("button", {name:"Show as grid"}).click();
+    await expect(full.locator(".tile")).toHaveCount(1);
+    await expect(panel.locator(".srow")).toHaveCount(1);
+    await full.getByRole("complementary").getByRole("button",{name:/Read weekly/}).click();await expect(full.locator(".tile")).toHaveCount(1);
     for(const scheme of ["light","dark"] as const){await full.emulateMedia({colorScheme:scheme,reducedMotion:"reduce"});await bounds(full);await shot(full,`expanded-${scheme}-1100`)}
     await panel.getByRole("button",{name:"Manage lists",exact:true}).click();await dialog.getByRole("button",{name:"Edit / add series",exact:true}).click();await dialog.getByLabel("List name",{exact:true}).fill("A very long weekly reading collection name for compact widths");await dialog.getByRole("button",{name:"Save list",exact:true}).click();await dialog.getByRole("button",{name:"Done",exact:true}).click();
     await expect(full.locator(".library-rail")).toContainText("A very long weekly");
