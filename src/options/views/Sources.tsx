@@ -52,24 +52,24 @@ export function SourcesSection() {
         <span className="spacer" />
         <button className="btn" onClick={async () => { toast.show("Checking…"); const r = await sendToWorker<{ checked: number }>({ type: "updates/check" }); toast.show(`Checked ${r?.checked ?? 0} sources`); }}>Check now</button>
       </div>
-      <table className="t">
+      <table className="t sources-table">
         <thead><tr><th>Site</th><th>Series</th><th>Health</th><th>Last check</th><th>Updates</th></tr></thead>
         <tbody>
           {rows.map(({ s, h }) => (
             <tr key={s.id}>
-              <td>{s.hostname}</td>
-              <td>{data?.series.get(s.seriesId)?.title}</td>
-              <td>
+              <td data-label="Site">{s.hostname}</td>
+              <td data-label="Series">{data?.series.get(s.seriesId)?.title}</td>
+              <td data-label="Health">
                 <span className={`health ${h}`}>{LABEL[h]}</span>
                 {s.lastError && s.consecutiveFailures > 0 && <div className="faint">{s.lastError}</div>}
               </td>
-              <td className="muted">{relativeTime(s.lastCheckedAt)}</td>
-              <td>
+              <td className="muted" data-label="Last check">{relativeTime(s.lastCheckedAt)}</td>
+              <td data-label="Updates">
                 <input type="checkbox" aria-label={`Check ${s.hostname} for updates`} checked={!s.disabled} onChange={async (e) => { await updateSource(s.id, { disabled: !e.target.checked }); void load(); }} />
               </td>
             </tr>
           ))}
-          {!rows.length && <tr><td colSpan={5} className="muted">No sources.</td></tr>}
+          {!rows.length && <tr><td colSpan={5} className="muted" data-label="Sources">No sources.</td></tr>}
         </tbody>
       </table>
     </>
