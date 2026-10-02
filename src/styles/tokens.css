@@ -1,82 +1,85 @@
-/* Design tokens. Covers supply most of the color; the chrome stays quiet. */
+/* Violet / Folio: local paper and plum-night surfaces. */
 :root {
   --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  --bg: #f7f7f5;
-  --surface: #ffffff;
-  --surface-2: #f1f1ee;
-  --hover: #ecece8;
-  --border: #e2e2de;
-  --border-strong: #cfcfca;
-  --text: #1c1e21;
-  --text-2: #55595f;
-  --text-3: #83878d;
-  --accent: #2f55d4;
-  --accent-text: #ffffff;
-  --accent-soft: #e8edfc;
-  --accent-soft-text: #2443ad;
+  --bg: #f7f3e8;
+  --surface: #fcf9f0;
+  --surface-2: #eee8db;
+  --hover: #e9e1d4;
+  --border: #ddd5c7;
+  --border-strong: #c9beaf;
+  --text: #2e2639;
+  --text-2: #675b6c;
+  --text-3: #6d6073;
+  --accent: #4726ce;
+  --accent-text: #fcf9f0;
+  --accent-soft: #eee7ff;
+  --accent-soft-text: #4726ce;
   --success: #1f7a4a;
+  --favorite: #946000;
   --warn: #9a6200;
   --danger: #b42318;
   --danger-soft: #fdecea;
-  --focus: #2f55d4;
-  --cover-bg: #e6e6e2;
+  --focus: #4726ce;
+  --cover-bg: #e7dfd2;
   --shadow-pop: 0 6px 24px rgba(20, 22, 26, 0.14), 0 1px 3px rgba(20, 22, 26, 0.08);
 
   --r-sm: 5px;
   --r: 7px;
   --r-lg: 9px;
-  --row-h: 68px;
+  --row-h: 88px;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #17191c;
-    --surface: #1e2125;
-    --surface-2: #24282d;
-    --hover: #2a2e34;
-    --border: #2e3238;
-    --border-strong: #3c424a;
-    --text: #e8e9eb;
-    --text-2: #a9adb3;
-    --text-3: #7d828a;
-    --accent: #8aa7ff;
-    --accent-text: #11151f;
-    --accent-soft: #263253;
-    --accent-soft-text: #b8caff;
+    --bg: #211b2b;
+    --surface: #292232;
+    --surface-2: #332a3d;
+    --hover: #3b3046;
+    --border: #493c53;
+    --border-strong: #66556e;
+    --text: #f5eedf;
+    --text-2: #c7bad0;
+    --text-3: #b5a6bd;
+    --accent: #c2afff;
+    --accent-text: #24193b;
+    --accent-soft: #403052;
+    --accent-soft-text: #d7c7ff;
     --success: #5cc48d;
+    --favorite: #dfb257;
     --warn: #e0a84a;
     --danger: #f08b80;
     --danger-soft: #3a2220;
-    --focus: #8aa7ff;
-    --cover-bg: #2a2e33;
+    --focus: #c2afff;
+    --cover-bg: #3b3046;
     --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
     color-scheme: dark;
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #17191c;
-  --surface: #1e2125;
-  --surface-2: #24282d;
-  --hover: #2a2e34;
-  --border: #2e3238;
-  --border-strong: #3c424a;
-  --text: #e8e9eb;
-  --text-2: #a9adb3;
-  --text-3: #7d828a;
-  --accent: #8aa7ff;
-  --accent-text: #11151f;
-  --accent-soft: #263253;
-  --accent-soft-text: #b8caff;
+  --bg: #211b2b;
+  --surface: #292232;
+  --surface-2: #332a3d;
+  --hover: #3b3046;
+  --border: #493c53;
+  --border-strong: #66556e;
+  --text: #f5eedf;
+  --text-2: #c7bad0;
+  --text-3: #b5a6bd;
+  --accent: #c2afff;
+  --accent-text: #24193b;
+  --accent-soft: #403052;
+  --accent-soft-text: #d7c7ff;
   --success: #5cc48d;
+  --favorite: #dfb257;
   --warn: #e0a84a;
   --danger: #f08b80;
   --danger-soft: #3a2220;
-  --focus: #8aa7ff;
-  --cover-bg: #2a2e33;
+  --focus: #c2afff;
+  --cover-bg: #3b3046;
   --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
   color-scheme: dark;
 }
