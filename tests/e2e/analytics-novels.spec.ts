@@ -1,5 +1,5 @@
 import { chromium, expect, test, type Page } from "@playwright/test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,25 @@ async function bounds(page:Page) {
  expect(await page.evaluate(()=>[...document.querySelectorAll<HTMLElement>("button,input,select,textarea")].filter(el=>el.getClientRects().length).filter(el=>{const r=el.getBoundingClientRect();return r.left < -1 || r.right > innerWidth+1;}).map(el=>el.getAttribute("aria-label") ?? el.textContent))).toEqual([]);
 }
 async function shot(page:Page,name:string) {if(process.env.SCREENSHOT_DIR){mkdirSync(process.env.SCREENSHOT_DIR,{recursive:true});await page.screenshot({path:`${process.env.SCREENSHOT_DIR}/${name}.png`});}}
+
+test("comic translation notes do not change format, and revisiting repairs an older incorrect label",async()=>{
+ const fx=await startFixtureServer(),dir=mkdtempSync(join(tmpdir(),"mt-format-repair-"));
+ const ctx=await chromium.launchPersistentContext(dir,{channel:"chromium",headless:true,executablePath:process.env.PW_CHROMIUM_PATH || undefined,viewport:{width:380,height:900},args:[`--disable-extensions-except=${EXT}`,`--load-extension=${EXT}`]});
+ try{
+  let [sw]=ctx.serviceWorkers();sw??=await ctx.waitForEvent("serviceworker");const ext=`chrome-extension://${new URL(sw.url()).host}`;
+  const fixture=readFileSync(new URL("../fixtures/comic-with-prose.html",import.meta.url),"utf8").replace(/\/page-(\d)\.jpg/g,"/pages/river-12-$1.png");
+  await ctx.route("**/manga/river/chapter-12/",route=>route.fulfill({contentType:"text/html",body:fixture}));
+  const reader=await ctx.newPage();await reader.goto(`${fx.base}/manga/river/chapter-12/`);
+  const full=await ctx.newPage();await full.goto(`${ext}/library.html`);await expect(full.locator(".tile .format-badge")).toHaveText("Manhwa");
+  await full.evaluate(async()=>{
+   const db=await new Promise<IDBDatabase>((resolve,reject)=>{const r=indexedDB.open("manwhatrack");r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+   const tx=db.transaction("series","readwrite"),store=tx.objectStore("series");const done=new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});
+   const r=store.getAll();r.onsuccess=()=>store.put({...r.result[0],format:"novel"});await done;db.close();
+  });await full.reload();await expect(full.locator(".tile .format-badge")).toHaveText("Novel");
+  await reader.reload();await expect(full.locator(".tile .format-badge")).toHaveText("Manhwa");await expect(full.locator(".tile")).toHaveCount(1);
+  await full.reload();await expect(full.locator(".tile .format-badge")).toHaveText("Manhwa");
+ }finally{await ctx.close();fx.server.close();rmSync(dir,{recursive:true,force:true});}
+});
 
 test("novels auto-track, Resume restores prose, compact timer fits, analytics stays local and persists",async()=>{
  test.setTimeout(120_000);
@@ -31,7 +50,7 @@ test("novels auto-track, Resume restores prose, compact timer fits, analytics st
   await expect(full.getByLabel("Format",{exact:true})).toHaveValue("novel");await full.getByRole("button",{name:"Edit genres",exact:true}).click();const dialog=full.getByRole("dialog");await dialog.getByRole("textbox").fill("Fantasy\nMurim");await dialog.getByRole("button",{name:"Save",exact:true}).click();
   for(const width of [320,960,1280,2560]){await full.setViewportSize({width,height:1000});await bounds(full);await shot(full,`archive-details-${width}`);}
   await full.getByRole("button",{name:"Reading analytics",exact:true}).click();await expect(full.locator(".analytics-page h1")).toHaveText("Shadow Slave");await full.reload();await expect(full.locator(".analytics-page h1")).toHaveText("Shadow Slave");
-  await full.getByRole("button",{name:"All reading analytics",exact:true}).click();await expect(full.locator(".analytics-overview")).toContainText("<1m");await expect(full.locator(".analytics-overview")).toContainText("Chapters finished");
+  await full.getByRole("button",{name:"All reading analytics",exact:true}).click();await expect(full.locator(".analytics-overview dl dd").first()).toHaveText(/^(<1|\d+)s$/);await expect(full.locator(".analytics-overview")).toContainText("Chapters finished");
   await full.getByRole("button",{name:"Chapters",exact:true}).click();await expect(full.getByRole("button",{name:"Chapters",exact:true})).toHaveAttribute("aria-pressed","true");await full.locator(".activity-day").last().focus();await full.keyboard.press("ArrowUp");await expect(full.locator(".heatmap-caption p")).not.toContainText("Hover or focus");
   for(const range of ["7D","30D","3M","1Y","ALL"]){await full.getByRole("button",{name:range,exact:true}).click();await expect(full.getByRole("button",{name:range,exact:true})).toHaveAttribute("aria-pressed","true");}
   const saved=await full.locator(".analytics-overview dl").textContent();await ctx.close();ctx=await launch();const reopened=await ctx.newPage();await reopened.goto(`${ext}/library.html#analytics`);await expect(reopened.locator(".analytics-overview dl")).toHaveText(saved!);
