@@ -3,6 +3,7 @@
 
 import type { Chapter, CompletionSource, CoverAsset, ReadingPosition, Series, SeriesSource } from "../shared/types/models";
 import type { DetectedChapterLink, DetectedSeries, PageObservation } from "../detection/types";
+import { recordTimedActivityTx } from "./repositories/analytics";
 import { WriteRevokedError, write, type Tx } from "./db";
 import { createChapter, createSeries, createSource, titleKeysFor } from "./schema";
 import { getSeriesTx, putSeriesTx, refreshSeriesTx } from "./repositories/series";
@@ -75,6 +76,7 @@ async function resolveTx(t: Tx, detected: DetectedSeries, fromSeriesPage: boolea
   // 2. Same host + same title: the same source, possibly moved or previously inferred.
   if (!source) {
     for (const s of await seriesByTitleKeys(t, keys)) {
+      if (detected.format && (s.format ?? "manhwa") !== detected.format) continue;
       const sameHost = (await t.byIndex<SeriesSource>("sources", "seriesId", s.id)).find((x) => x.hostname === host);
       if (sameHost) {
         const trustNew = !detected.seriesUrlInferred && (fromSeriesPage || sameHost.seriesUrlInferred);
@@ -103,7 +105,7 @@ async function resolveTx(t: Tx, detected: DetectedSeries, fromSeriesPage: boolea
   let possibleDuplicateOf: string | undefined;
   let attachTo: Series | undefined;
   for (const s of await seriesByTitleKeys(t, keys)) {
-    if (s.removedAt) continue;
+    if (s.removedAt || (detected.format && (s.format ?? "manhwa") !== detected.format)) continue;
     const shared = s.titleKeys.filter((k) => keys.includes(k));
     if (s.normalizedTitle === normalized && shared.length >= 2) {
       attachTo = s;
@@ -124,6 +126,8 @@ async function resolveTx(t: Tx, detected: DetectedSeries, fromSeriesPage: boolea
 /** Updates detected metadata without touching anything the user owns. */
 function applyDetectedMetadata(series: Series, source: SeriesSource, detected: DetectedSeries, fromSeriesPage: boolean, adapterId: string, now: number): void {
   series.detectedTitle = detected.title;
+  if (detected.format && !series.userFields.includes("format")) series.format = detected.format;
+  if (detected.genres?.length && !series.userFields.includes("genres")) series.genres = [...new Set(detected.genres)].slice(0, 20);
   if (!series.userFields.includes("title") && (fromSeriesPage || !series.title)) series.title = detected.title;
   if (!series.userFields.includes("alternateTitles")) {
     const extra = [...detected.alternateTitles, ...(series.title !== detected.title ? [detected.title] : [])];
@@ -177,6 +181,7 @@ export async function upsertChapterListTx(
       }
       if (existing.inferred && !opts.inferred) {
         existing.inferred = undefined;
+        if (source.latestKnownChapter?.ordinal !== undefined && parsed.ordinal !== undefined && parsed.ordinal > source.latestKnownChapter.ordinal) existing.observedReleaseAt ??= now;
         changed = true;
       }
       if (changed) await t.put("chapters", existing);
@@ -184,6 +189,7 @@ export async function upsertChapterListTx(
     }
     const c = createChapter({ seriesId: series.id, sourceId: source.id, label: parsed.label, url: link.url, now });
     if (opts.inferred) c.inferred = true;
+    else if (source.latestKnownChapter?.ordinal !== undefined && parsed.ordinal !== undefined && parsed.ordinal > source.latestKnownChapter.ordinal) c.observedReleaseAt = now;
     await t.put("chapters", c);
     added.push(c);
   }
@@ -215,7 +221,7 @@ export async function trackSeriesPage(obs: PageObservation, now = Date.now(), sh
     await putSeriesTx(t, r.series);
     await upsertChapterListTx(t, r.series, r.source, detected.chapterList, now);
     await t.put("sources", r.source);
-    const s = await refreshSeriesTx(t, r.series.id);
+    const s = await refreshSeriesTx(t, r.series.id, undefined, now);
     return result(r, s ?? r.series, await coverToFetchTx(t, s ?? r.series, detected));
   }, shouldWrite).catch(err => { if (err instanceof WriteRevokedError) return null; throw err; });
 }
@@ -307,7 +313,7 @@ export async function trackChapterOpened(obs: PageObservation, opts: OpenOptions
     for (const u of [ch.nextUrl, ch.prevUrl]) {
       const url = u ? toUrl(u) : null;
       const label = url ? chapterLabelFromUrl(url) : undefined;
-      if (url && label) neighbours.push({ label, url: url.href });
+      if (url && label && obs.adapterId !== "novel-platforms") neighbours.push({ label, url: url.href });
     }
     if (neighbours.length) await upsertChapterListTx(t, r.series, r.source, neighbours, now, { inferred: true });
 
@@ -320,7 +326,7 @@ export async function trackChapterOpened(obs: PageObservation, opts: OpenOptions
     if (!isRevisit) {
       await addEventTx(t, { seriesId: r.series.id, chapterId: chapter.id, type: "opened", timestamp: now, chapterLabel: chapter.chapterLabel, hostname: r.source.hostname });
     }
-    const s = await refreshSeriesTx(t, r.series.id);
+    const s = await refreshSeriesTx(t, r.series.id, undefined, now);
     // Chapter pages rarely name a cover; use their share image only until the series page is seen.
     const fallback = detected.coverUrl ?? detected.coverCandidates[0];
     const cover = !owned && !s?.detectedCoverId && fallback && isSafeHttpUrl(fallback) ? fallback : undefined;
@@ -337,7 +343,7 @@ async function completeTx(t: Tx, chapterId: string, source: CompletionSource, no
   await t.put("chapters", c);
   const src = await t.get<SeriesSource>("sources", c.sourceId);
   await addEventTx(t, { seriesId: c.seriesId, chapterId: c.id, type: "completed", timestamp: now, progress: c.maxProgress, chapterLabel: c.chapterLabel, hostname: src?.hostname });
-  await refreshSeriesTx(t, c.seriesId);
+  await refreshSeriesTx(t, c.seriesId, undefined, now);
   return true;
 }
 
@@ -362,10 +368,11 @@ export async function recordProgress(chapterId: string, u: ProgressUpdate, now =
     if (!c) return { completed: false, progress: 0 };
     if ((u.progressRevision ?? 0) !== (c.progressRevision ?? 0)) return { completed: false, progress: c.maxProgress, progressRevision: c.progressRevision ?? 0, stale: true };
     const p = Math.max(0, Math.min(1, Number.isFinite(u.progress) ? u.progress : 0));
-    const delta = Math.max(0, Math.min(MAX_PROGRESS_DELTA_MS, u.readingTimeDeltaMs || 0));
+    const delta = Math.max(0, Math.min(MAX_PROGRESS_DELTA_MS, Number.isFinite(u.readingTimeDeltaMs) ? u.readingTimeDeltaMs : 0));
     const positionOnly = p <= c.maxProgress && delta === 0 && !u.final && !!u.readingPosition && (!!c.completedAt || c.maxProgress < u.threshold);
     c.maxProgress = Math.max(c.maxProgress, p);
     c.readingTimeMs += delta;
+    if (delta > 0) await recordTimedActivityTx(t, c, delta, now);
     updateReadingPosition(c, u.readingPosition, now);
     await t.put("chapters", c);
     if (positionOnly) return { completed: false, progress: c.maxProgress, progressRevision: c.progressRevision ?? 0, positionOnly: true };
@@ -376,7 +383,7 @@ export async function recordProgress(chapterId: string, u: ProgressUpdate, now =
       if (u.final && !c.completedAt && c.maxProgress >= 0.05) {
         await addEventTx(t, { seriesId: c.seriesId, chapterId: c.id, type: "progress", timestamp: now, progress: c.maxProgress, chapterLabel: c.chapterLabel });
       }
-      await refreshSeriesTx(t, c.seriesId);
+      await refreshSeriesTx(t, c.seriesId, undefined, now);
     }
     return { completed, progress: c.maxProgress, progressRevision: c.progressRevision ?? 0 };
   }, u.shouldWrite).catch(err => { if (err instanceof WriteRevokedError) return { completed: false, progress: 0, blocked: true }; throw err; });
@@ -424,7 +431,7 @@ export async function applyUpdateCheck(sourceId: string, outcome: UpdateCheckOut
     source.lastError = undefined;
     source.lastSuccessfulCheckAt = now;
     await t.put("sources", source);
-    const s = await refreshSeriesTx(t, series.id);
+    const s = await refreshSeriesTx(t, series.id, undefined, now);
     const newChapters = added.filter((c) => c.ordinal !== undefined && (prevLatest === undefined || c.ordinal > prevLatest));
     return { series: s, newChapters };
   });
