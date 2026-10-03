@@ -110,7 +110,7 @@ describe("local user lists", () => {
   it("migrates schema3 backups and rejects invalid collection identity or dangling references", async () => {
     await seed(); const file = await exportLibrary();
     const old = parseBackup(JSON.stringify({ ...file, exportVersion: 3, schemaVersion: 3, collections: undefined }));
-    expect(old).toMatchObject({ ok: true, file: { exportVersion: 4, collections: [] } });
+    expect(old).toMatchObject({ ok: true, file: { exportVersion: 5, collections: [] } });
     const c = { id: "list", name: "Weekly", seriesIds: [file.series[0]!.id], createdAt: 0, updatedAt: 0 };
     for (const collections of [[{ ...c, name: " " }], [c, { ...c, id: "other", name: "weekly" }], [{ ...c, seriesIds: ["missing"] }], [c, { ...c, name: "Another" }]]) {
       expect(parseBackup(JSON.stringify({ ...file, collections })).ok).toBe(false);
