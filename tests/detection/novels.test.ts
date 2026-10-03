@@ -47,3 +47,33 @@ it("keeps season and part identities and accepts numbered novel headings without
   expect(detectPage(d,new URL("https://www.royalroad.com/fiction/456/river/chapter/987654/the-forest")).chapter?.label).toBe(label);
  }
 });
+
+
+describe("format evidence is consistent between landing pages and readers",()=>{
+ it("keeps comic pages with translation notes attached to their actual image reader",()=>{
+  const d=doc(readFileSync(new URL("../fixtures/comic-with-prose.html",import.meta.url),"utf8"));const url=new URL("https://stories.example/manga/river/chapter-12/");
+  expect(detectPage(d,url).series?.format).toBe("manhwa");expect(readerContainerFor(d,url)).toBe(d.querySelector(".reading-content"));
+ });
+ it("uses explicit format metadata before a site's shared manga route",()=>{
+  const links=Array.from({length:12},(_,i)=>`<a href="/manga/river/chapter-${i+1}/">Chapter ${i+1}</a>`).join("");
+  const d=doc(`<h1>River</h1><dl><dt>Type</dt><dd>Web Novel</dd></dl>${links}`);
+  expect(detectPage(d,new URL("https://stories.example/manga/river/")).series?.format).toBe("novel");
+  const ch=doc(`<h1>River Chapter 12</h1><a href="/manga/river/">River</a><article class="chapter-content">${prose}</article>`);
+  expect(detectPage(ch,new URL("https://stories.example/manga/river/chapter-12/")).series?.format).toBe("novel");
+ });
+ it("does not overwrite an established format from an ambiguous landing page",()=>{
+  const links=Array.from({length:12},(_,i)=>`<a href="/series/river/chapter-${i+1}/">Chapter ${i+1}</a>`).join("");
+  expect(detectPage(doc(`<h1>River</h1>${links}`),new URL("https://stories.example/series/river/")).series?.format).toBeUndefined();
+ });
+ it("keeps known comic platforms comic even when prose appears elsewhere on the page",()=>{
+  const d=doc(readFileSync(new URL("../fixtures/webtoons-viewer.html",import.meta.url),"utf8"));
+  d.body.insertAdjacentHTML("beforeend",`<article>${prose}</article>`);
+  expect(detectPage(d,new URL("https://www.webtoons.com/en/fantasy/tower-of-god/episode-1/viewer?title_no=95&episode_no=1")).series?.format).toBe("manhwa");
+ });
+ it("distinguishes novels and comics on Tapas using the episode content",()=>{
+  for(const [content,format] of [[prose,"novel"],[Array.from({length:6},(_,i)=>`<img src="/page-${i}.jpg" width="600" height="900">`).join(""),"manhwa"]]) {
+   const d=doc(`<a href="/series/river/info">River</a><h1 class="center-info__title--small">River</h1><h2 class="js-ep-title">Episode 12</h2><div class="js-episode-article">${content}</div>`);
+   const o=detectPage(d,new URL("https://tapas.io/episode/123456"));expect(o.series?.format).toBe(format);expect(readerContainerFor(d,new URL("https://tapas.io/episode/123456"))).toBe(d.querySelector(".js-episode-article"));
+  }
+ });
+});
