@@ -10,7 +10,7 @@ import { findReaderContainer } from "./reader";
 import { scanLinks } from "./links";
 import { coverCandidates } from "./cover";
 
-const SERIES_PATH = /\/(?:manga|manhwa|manhua|series|comic|comics|webtoon|webtoons|title|titles|novel|read|serie|obra)\/[^/]+/i;
+const SERIES_PATH = /\/(?:manga|manhwa|manhua|series|comic|comics|webtoon|webtoons|title|titles|novel|novels|fiction|book|read|serie|obra)\/[^/]+/i;
 const LISTING_PATH = /\/(?:search|genres?|tags?|categor(?:y|ies)|latest|popular|trending|ranking|list|directory|az-list|page\/\d+)(?:\/|$)|[?&](?:s|q|query|keyword|search)=/i;
 const CHAPTER_TEXT = /\b(?:chapter|chap|ch|episode|ep)\.?\s*#?\d+(?:\.\d+)?\b/i;
 const META_LABELS = /^(?:author|authors|artist|artists|status|genres?|type|alternative|alt(?:ernative)? names?|released|serialization|publisher)\s*:?$/i;
@@ -44,7 +44,7 @@ export function detectGeneric(doc: Document, url: URL): PageObservation {
   const ld = jsonLd(doc);
   const ldKinds = ld.flatMap(ldTypes);
 
-  const urlChapterLabel = chapterLabelFromUrl(url);
+  const urlChapterLabel = chapterLabelFromUrl(url) ?? (/\/(?:novels?|fiction|book)\//i.test(url.pathname) ? /\/(prologue|epilogue|side-story(?:-\d+)?|special(?:-\d+)?)\/?$/i.exec(url.pathname)?.[1]?.replace(/-/g," ") : undefined);
   const reader = findReaderContainer(doc);
   const links = scanLinks(doc, url, urlChapterLabel ? href : undefined);
   const crumbs = breadcrumbs(doc, href);
@@ -52,7 +52,7 @@ export function detectGeneric(doc: Document, url: URL): PageObservation {
   // ---- chapter score ----
   const ce: DetectionEvidence[] = [];
   if (urlChapterLabel) ce.push({ signal: "chapter-url", weight: 0.35, detail: urlChapterLabel });
-  if (reader) ce.push({ signal: "reader-container", weight: reader.imageCount >= 8 ? 0.35 : 0.25, detail: `${reader.imageCount} images` });
+  if (reader) ce.push({ signal: "reader-container", weight: reader.via === "text-reader" || reader.imageCount >= 8 ? 0.35 : 0.25, detail: `${reader.imageCount} images` });
   if (links.nextUrl || links.prevUrl) ce.push({ signal: "chapter-navigation", weight: 0.15 });
   const titleChapter = [headingText, ogTitle ?? "", docTitle].find((t) => CHAPTER_TEXT.test(t) || (reader !== null && SPECIAL_LABEL.test(t)));
   if (titleChapter) ce.push({ signal: "chapter-title", weight: 0.15, detail: titleChapter.slice(0, 80) });
@@ -69,7 +69,7 @@ export function detectGeneric(doc: Document, url: URL): PageObservation {
   const metaLabels = qsa(doc, "dt, th, b, strong, h5, .summary-heading, .imptdt, span", 1500).filter((e) => META_LABELS.test(text(e, 40))).length;
   if (metaLabels >= 2) se.push({ signal: "metadata-labels", weight: 0.1, detail: `${metaLabels} labels` });
   if (urlChapterLabel) se.push({ signal: "chapter-url", weight: -0.35 });
-  if (reader && reader.imageCount >= 5) se.push({ signal: "reader-container", weight: -0.3 });
+  if (reader && (reader.imageCount >= 5 || reader.via === "text-reader")) se.push({ signal: "reader-container", weight: -0.3 });
   if (links.groups >= 4 && links.dominantShare < 0.5) se.push({ signal: "many-series", weight: -0.4, detail: `${links.groups} groups` });
 
   const chapterScore = clamp(sum(ce));
@@ -96,6 +96,7 @@ export function detectGeneric(doc: Document, url: URL): PageObservation {
       prevUrl: links.prevUrl,
     };
     const series = seriesFromChapterPage(doc, url, crumbs, headingText, ogTitle, docTitle, site, links.chapterList);
+    if (series) { series.format = reader?.via === "text-reader" ? "novel" : "manhwa"; series.genres = extractGenres(doc); }
     if (!series) ce.push({ signal: "no-series-title", weight: -0.25 });
     else ce.push({ signal: "series-identified", weight: 0.05, detail: series.title });
     return {
@@ -175,6 +176,13 @@ export function extractAltTitles(doc: Document): string[] {
     .slice(0, 12);
 }
 
+export function extractGenres(doc: Document): string[] {
+  const links = qsa(doc, 'a[href*="/genre/"], a[href*="/genres/"], .genres a', 50).map(el => text(el,40)).filter(value => value.length > 1);
+  if (links.length) return [...new Set(links)].slice(0,20);
+  const value = labelledValue(doc, /^genres?\s*:?/i);
+  return value ? [...new Set(value.split(/[,;|•/]/).map(s => s.trim()).filter(s => s.length > 1 && s.length <= 40))].slice(0, 20) : [];
+}
+
 export function extractStoryEnded(doc: Document): boolean | undefined {
   const v = labelledValue(doc, STATUS_LABELS);
   if (!v) return undefined;
@@ -206,6 +214,8 @@ function extractSeriesGeneric(
   const alts = extractAltTitles(doc).filter((a) => a.toLowerCase() !== title.toLowerCase());
   return {
     title,
+    format: /\/(?:novels?|fiction|book)\//i.test(url.pathname) || /novel/i.test(labelledValue(doc, /^type\s*:?/i) ?? "") ? "novel" : "manhwa",
+    genres: extractGenres(doc),
     alternateTitles: alts,
     seriesUrl: url.href,
     canonicalSeriesUrl: seriesUrl,
@@ -236,7 +246,7 @@ function seriesFromChapterPage(
     const cand = idx > 0 ? crumbs[idx - 1] : lastNonRootCrumb(crumbs);
     if (cand) {
       const cleaned = cleanSeriesTitle(cand.text, site);
-      if (isPlausibleTitle(cleaned) && !/^(?:home|manga|manhwa|comics?|series)$/i.test(cleaned)) {
+      if (isPlausibleTitle(cleaned) && !/^(?:home|manga|manhwa|comics?|series|novels?|fiction|books?)$/i.test(cleaned)) {
         title = cleaned;
         seriesUrl = cand.href && !chapterLabelFromUrl(new URL(cand.href)) ? cand.href : undefined;
       }
