@@ -31,7 +31,7 @@ it('retains the entered fields after failure and publishes only after successful
   expect(host.querySelector<HTMLInputElement>('input[type="url"]')!.value).toBe('https://reading.example/series');
   expect(added).not.toHaveBeenCalled(); expect(api.publish).not.toHaveBeenCalled();
   await submit();
-  expect(api.add).toHaveBeenLastCalledWith({ title: 'Correct title', url: 'https://reading.example/series', status: 'planning' });
+  expect(api.add).toHaveBeenLastCalledWith({ title: 'Correct title', url: 'https://reading.example/series', status: 'planning', format: 'manhwa' });
   expect(api.publish).toHaveBeenCalledWith({ type: 'library-changed', seriesIds: [series.id] });
   expect(added).toHaveBeenCalledWith(series);
 });
