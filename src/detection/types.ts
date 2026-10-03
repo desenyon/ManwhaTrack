@@ -58,6 +58,8 @@ export interface PageObservation {
 
 export interface SiteAdapter {
   id: string;
+  /** Only for platforms that exclusively carry one reading format. */
+  format?: DetectedSeries["format"];
   /** Hostnames this adapter owns ("example.com" also matches subdomains). */
   hosts: string[];
   /** Optional DOM signature check for theme adapters that work across many hosts. */
