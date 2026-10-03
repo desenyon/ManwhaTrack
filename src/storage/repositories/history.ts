@@ -9,7 +9,7 @@ export async function listEvents(opts: { seriesId?: string; limit?: number; befo
     if (opts.seriesId) {
       const all = await t.byIndex<ReadingEvent>("events", "seriesId", opts.seriesId);
       return all
-        .filter((e) => opts.before === undefined || e.timestamp < opts.before)
+        .filter((e) => e.type !== "time" && e.type !== "backlog" && (opts.before === undefined || e.timestamp < opts.before))
         .sort((a, b) => b.timestamp - a.timestamp)
         .slice(0, limit);
     }
@@ -20,7 +20,8 @@ export async function listEvents(opts: { seriesId?: string; limit?: number; befo
       r.onsuccess = () => {
         const c = r.result;
         if (!c || out.length >= limit) return resolve();
-        out.push(c.value as ReadingEvent);
+        const event = c.value as ReadingEvent;
+        if (event.type !== "time" && event.type !== "backlog") out.push(event);
         c.continue();
       };
       r.onerror = () => reject(r.error);
