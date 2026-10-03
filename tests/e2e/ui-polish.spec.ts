@@ -85,7 +85,8 @@ test("sidebar metadata, expanded details, list forms, adaptive artwork and reduc
     await expect(full.locator(".progress-facts")).toContainText("Ch. 304");
     const chapterBox = await full.locator(".detail-chapters").boundingBox();
     const metadataBox = await full.locator(".detail-metadata").boundingBox();
-    expect(chapterBox!.x).toBeGreaterThan(metadataBox!.x + metadataBox!.width);
+    expect(metadataBox!.x).toBeGreaterThan(chapterBox!.x + chapterBox!.width);
+    expect(chapterBox!.width).toBeGreaterThan(metadataBox!.width);
     for (const colorScheme of ["light", "dark"] as const) {
       await full.emulateMedia({ colorScheme, reducedMotion: "reduce" }); await bounds(full); await shot(full, `polished-details-${colorScheme}`);
     }
