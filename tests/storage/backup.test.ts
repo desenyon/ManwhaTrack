@@ -26,7 +26,7 @@ describe("export / import", () => {
     await seed();
     const file = await exportLibrary({ includeCovers: true });
     expect(file.application).toBe("ManwhaTrack");
-    expect(file.exportVersion).toBe(4);
+    expect(file.exportVersion).toBe(5);
     expect(file.series[0]).not.toHaveProperty("summary");
     expect(file.covers).toHaveLength(1);
 
