@@ -81,6 +81,8 @@ test("direct list membership, calm outer scenery, scrolling and settings survive
     const left=await full.locator(".margin-left").boundingBox(), right=await full.locator(".margin-right").boundingBox();
     expect(left!.x+left!.width).toBeLessThanOrEqual(appBox!.x+1); expect(right!.x).toBeGreaterThanOrEqual(appBox!.x+appBox!.width-1);
     const clouds=full.locator(".margin-clouds").first(); const before=await clouds.evaluate(el=>getComputedStyle(el).transform);
+    expect(await clouds.evaluate(el=>getComputedStyle(el).animationDuration)).toBe("10s");
+    expect(await clouds.evaluate(el=>getComputedStyle(el).opacity)).toBe("0.09");
     await full.waitForTimeout(1200); expect(await clouds.evaluate(el=>getComputedStyle(el).transform)).not.toBe(before);
     expect(await full.locator(".margin-scenery").evaluate(el=>getComputedStyle(el).pointerEvents)).toBe("none");
     await full.emulateMedia({reducedMotion:"reduce"}); expect(await clouds.evaluate(el=>getComputedStyle(el).animationName)).toBe("none");
