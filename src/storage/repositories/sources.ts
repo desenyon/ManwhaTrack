@@ -49,6 +49,7 @@ export function mergeChapterInto(into: Chapter, from: Chapter, snapshot = false)
     into.ordinal = from.ordinal;
   }
   into.userFields = [...new Set([...into.userFields, ...from.userFields])];
+  into.observedReleaseAt = minDefined(into.observedReleaseAt, from.observedReleaseAt);
   into.firstOpenedAt = minDefined(into.firstOpenedAt, from.firstOpenedAt);
   into.lastOpenedAt = maxDefined(into.lastOpenedAt, from.lastOpenedAt);
   if (from.completedAt && (!into.completedAt || from.completedAt < into.completedAt)) {
@@ -188,6 +189,8 @@ export function mergeSeriesFields(into: Series, from: Series): void {
     (a) => a !== into.title,
   );
   into.tags = unique([...into.tags, ...from.tags]);
+  into.genres = unique([...(into.genres ?? []), ...(from.genres ?? [])]);
+  if (from.userFields.includes("format") && !into.userFields.includes("format")) into.format = from.format;
   if (from.notes && from.notes !== into.notes) into.notes = into.notes ? `${into.notes}\n\n${from.notes}` : from.notes;
   into.favorite ||= from.favorite;
   into.pinned ||= from.pinned;
