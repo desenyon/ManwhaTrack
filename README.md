@@ -119,7 +119,13 @@ Optional update checks go straight to each site — a few per run, one per site,
 
 Open **Analytics** from the expanded library navigation or the sidebar menu. **Reading analytics** in series details opens a focused view of that title. Activity heatmaps, reading-time graphs, sessions, time of day, backlog snapshots, pace, retention, genre/source breakdowns and historical milestones are calculated entirely on your device.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/implementation/1.2.1-screenshots/analytics-dark-1280.png">
+  <img src="docs/implementation/1.2.1-screenshots/analytics-light-1280.png" alt="Local Analytics with a weekly overview, labeled analysis periods and a calendar activity heatmap" width="100%">
+</picture>
+
 - Dated active time is recorded from version 1.2.0 onward. Earlier chapter totals remain intact but cannot be assigned invented dates, hours or sessions.
+- Analytics refreshes during active reading. Measurements under a minute show seconds; calendar month labels identify the activity window, and the analysis-period controls apply to time graphs and reading breakdowns. The weekly overview always describes the current week.
 - Activity counts automatic completions, rather than bulk manual progress corrections. Sessions group measured reading with gaps of no more than 15 minutes. Hourly activity uses minute-level measurements.
 - Backlog means known new chapters waiting; its trend builds from dated local snapshots. Catch-up estimates use measured chapter times and recent completion pace.
 - Update timing means **first observed after an established catalog**, not the publisher's release date. Initial catalogs do not count as newly released chapters.
@@ -127,6 +133,8 @@ Open **Analytics** from the expanded library navigation or the sidebar menu. **R
 - Backups include dated measurements, format labels, genres and backlog snapshots. Clearing reading history also clears dated analytics, while retaining the library, chapter progress and lifetime chapter time.
 
 Web novels use the same local progress, Resume, lists, tags, cover caching and backup system. Generic detection recognizes substantial paragraph readers; platform templates avoid mistaking opaque chapter IDs for chapter numbers. Protected, unrendered or unusual readers may need local site rules or manual correction. Template fixtures and local browser flows are tested; universal compatibility with every novel site is not claimed.
+
+Format detection uses explicit source metadata and reader content before shared comic routes. Ambiguous landing pages preserve the existing label. Revisiting a series corrects older automatic misclassifications; **Series details → Format** offers an immediate correction that future detections respect.
 
 ## Supported sites
 
