@@ -174,6 +174,8 @@ Then load the `dist/` folder as above. `npm run launch` opens a separate Chrome 
 
 ## Privacy
 
+Preparing a Chrome Web Store submission? See [the upload guide](chrome-web-store/UPLOAD.md). `npm run package:store` creates an uploadable extension ZIP and a separate submission bundle containing listing text, privacy disclosures and Store graphics.
+
 > **Your library is stored on this device. ManwhaTrack has no account and no server.**
 
 ManwhaTrack talks only to the reading sites you use — to read the page you opened, to download a series cover once, and (if enabled) to check tracked series for new chapters. Reading analytics are computed locally. There is no telemetry, remote code or external error reporting. Incognito windows are ignored unless you turn that on. See [PRIVACY.md](PRIVACY.md) for details.
