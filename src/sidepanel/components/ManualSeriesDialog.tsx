@@ -10,6 +10,7 @@ export function ManualSeriesDialog({ initial, onClose, onAdded }: { initial: { t
   const [title, setTitle] = useState(initial.title ?? "");
   const [url, setUrl] = useState(initial.url ?? "");
   const [status, setStatus] = useState<SeriesStatus>("planning");
+  const [format, setFormat] = useState<"manhwa" | "novel">("manhwa");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const valid = title.trim().length > 0 && title.trim().length <= 200 && isSafeHttpUrl(url.trim());
@@ -21,7 +22,7 @@ export function ManualSeriesDialog({ initial, onClose, onAdded }: { initial: { t
         if (!valid || busy) return;
         setBusy(true); setError(undefined);
         try {
-          const series = await addManualSeries({ title, url, status });
+          const series = await addManualSeries({ title, url, status, format });
           publish({ type: "library-changed", seriesIds: [series.id] });
           await onAdded(series);
         } catch (err) {
@@ -32,6 +33,7 @@ export function ManualSeriesDialog({ initial, onClose, onAdded }: { initial: { t
         <label className="stack"><span>Source page address</span><input className="input" type="url" value={url} placeholder="https://…" required onChange={(e) => setUrl(e.target.value)} disabled={busy} aria-describedby="manual-url-help" /></label>
         <p id="manual-url-help" className="small muted" style={{ margin: 0 }}>Only http and https addresses are accepted. Your library stays on this device.</p>
         <label className="stack"><span>Status</span><select className="select" value={status} onChange={(e) => setStatus(e.target.value as SeriesStatus)} disabled={busy}>{SERIES_STATUSES.map((value) => <option key={value} value={value}>{STATUS_LABEL[value]}</option>)}</select></label>
+        <label className="stack"><span>Format</span><select className="select" value={format} onChange={e => setFormat(e.target.value as "manhwa" | "novel")} disabled={busy}><option value="manhwa">Manhwa / comic</option><option value="novel">Web novel</option></select></label>
         {error && <p role="alert" style={{ color: "var(--danger)", margin: 0 }}>{error}</p>}
         <div className="actions"><button className="btn" type="button" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={!valid || busy} type="submit">{busy ? "Saving…" : "Track series"}</button></div>
       </form>
