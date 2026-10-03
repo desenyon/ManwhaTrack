@@ -125,7 +125,7 @@ test("README screenshots", async () => {
     const bounds = async (page: Page) => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       const footer = page.locator(".colophon");
-      if (await footer.count()) expect(await footer.evaluate(el => el.querySelector("img")!.getBoundingClientRect().top >= el.querySelector("p")!.getBoundingClientRect().bottom)).toBe(true);
+      if (await footer.count()) expect(await footer.evaluate(el => el.querySelector("img")!.getBoundingClientRect().top >= el.querySelector(".colophon-caption")!.getBoundingClientRect().bottom)).toBe(true);
     };
     await menuAction(panel, "The Last Swordmaster", "Add to queue");
     await menuAction(panel, "Starfall Academy", "Add to queue");
