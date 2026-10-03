@@ -22,3 +22,8 @@ describe("message boundary validation", () => {
     expect(o?.chapter?.nextUrl).toBeUndefined();
   });
 });
+
+ it("preserves bounded novel format and genres across the worker boundary", () => {
+   const o = sanitizeObservation({ url:"https://novels.example/novel/river/",kind:"series",confidence:.9,series:{title:"River",format:"novel",genres:["Fantasy",42,"Adventure"],alternateTitles:[],seriesUrl:"https://novels.example/novel/river/",canonicalSeriesUrl:"https://novels.example/novel/river/",coverCandidates:[],chapterList:[]} });
+   expect(o?.series?.format).toBe("novel"); expect(o?.series?.genres).toEqual(["Fantasy","Adventure"]);
+ });
