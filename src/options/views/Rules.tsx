@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { SiteRule, SiteRuleSelectors } from "../../shared/types/settings";
-import type { SectionProps } from "./General";
+import { Toggle, type SectionProps } from "./General";
 import { useToast } from "../../ui/toasts";
 
 const FIELDS: { key: keyof SiteRuleSelectors; label: string; placeholder: string }[] = [
@@ -74,7 +74,7 @@ export function RulesSection({ settings, update, prefillHost }: SectionProps & {
                     <td>{r.host}</td>
                     <td className="muted">{Object.values(r.selectors).filter(Boolean).length} set</td>
                     <td>
-                      <input type="checkbox" aria-label={`Enable rule for ${r.host}`} checked={r.enabled} onChange={(e) => void update({ siteRules: settings.siteRules.map((x) => (x.id === r.id ? { ...x, enabled: e.target.checked } : x)) })} />
+                      <Toggle label={`Enable rule for ${r.host}`} checked={r.enabled} onChange={v => void update({ siteRules: settings.siteRules.map(x => x.id === r.id ? { ...x, enabled: v } : x) })} />
                     </td>
                     <td style={{ textAlign: "right" }}>
                       <button className="btn sm" onClick={() => setEditing(r)}>Edit</button>{" "}
