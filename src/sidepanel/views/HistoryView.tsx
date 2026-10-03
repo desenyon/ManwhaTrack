@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReadingEvent, Series } from "../../shared/types/models";
 import { clearAllHistory, clearSeriesHistory, deleteEvent, listEvents } from "../../storage/repositories/history";
 import { dayHeading, percent, startOfDay, timeOfDay } from "../../shared/utils/format";
-import { subscribe } from "../../shared/bus";
+import { publish, subscribe } from "../../shared/bus";
 import { Dialog } from "../../ui/Menu";
 import { useToast } from "../../ui/toasts";
 import { Icon } from "../../ui/icons";
@@ -14,6 +14,8 @@ const PAGE = 150;
 export function eventText(e: ReadingEvent): string {
   const ch = e.chapterLabel ?? "a chapter";
   switch (e.type) {
+    case "time": return "Measured active reading";
+    case "backlog": return "Recorded backlog";
     case "opened":
       return `Opened ${ch}`;
     case "completed":
@@ -66,7 +68,7 @@ export function EventList({ seriesId, byId, onOpenSeries }: { seriesId?: string;
                 </span>
                 <button className="icon-btn" style={{ width: 22, height: 22 }} aria-label="Delete this event" onClick={async () => {
                   if (!window.confirm("Delete this reading event? Chapter progress will be kept.")) return;
-                  try { await deleteEvent(e.id); void load(); } catch { toast.show("Could not delete this event.", { error: true }); }
+                  try { await deleteEvent(e.id); publish({type:"library-changed"}); void load(); } catch { toast.show("Could not delete this event.", { error: true }); }
                 }}>
                   <Icon name="close" />
                 </button>
@@ -83,14 +85,14 @@ export function EventList({ seriesId, byId, onOpenSeries }: { seriesId?: string;
       {confirm && (
         <Dialog title={seriesId ? "Clear this series' history?" : "Clear all reading history?"} onClose={() => setConfirm(false)}>
           <p className="muted" style={{ marginTop: 0 }}>
-            Only the event log is cleared. Your library, chapter progress and Continue positions stay as they are.
+            The event log and dated analytics are cleared. Your library, chapter progress and Continue positions stay as they are.
           </p>
           <div className="actions">
             <button className="btn" onClick={() => setConfirm(false)}>Cancel</button>
             <button
               className="btn danger solid"
               onClick={async () => {
-                try { await (seriesId ? clearSeriesHistory(seriesId) : clearAllHistory()); setConfirm(false); void load(); } catch { toast.show("Could not clear reading history.", { error: true }); }
+                try { await (seriesId ? clearSeriesHistory(seriesId) : clearAllHistory()); setConfirm(false); publish({type:"library-changed"}); void load(); } catch { toast.show("Could not clear reading history.", { error: true }); }
               }}
             >
               Clear history
