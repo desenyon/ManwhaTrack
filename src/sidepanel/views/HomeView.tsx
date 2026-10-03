@@ -11,7 +11,7 @@ import { Cover } from "../../ui/Cover";
 import { useToast } from "../../ui/toasts";
 import { NowReading } from "../components/NowReading";
 import { FilterBar } from "../components/FilterBar";
-import { SeriesRow, SeriesTile, continueText, LIBRARY_ROW_HEIGHT } from "../components/SeriesItem";
+import { SeriesRow, SeriesTile, FormatBadge, continueText, LIBRARY_ROW_HEIGHT } from "../components/SeriesItem";
 import { VirtualList } from "../components/VirtualList";
 import { BatchBar } from "../components/BatchBar";
 import { QueueView } from "./QueueView";
@@ -120,8 +120,8 @@ export function HomeView(p: HomeProps) {
 
   return (
     <><div className="library-home"><div className="library-content">
-      <div className="folio-heading"><div><span className="section-title">{p.collection ? "Your list" : "A private reading collection"}</span><h1 className={p.collection ? "collection-title" : undefined} title={p.collection?.name}>{p.collection?.name ?? "Your library."}</h1>{p.collection && <p className="small muted">{p.collection.seriesIds.length} series · Stored on this device</p>}</div>{p.collection && <div className="list-page-actions"><button className="btn primary" onClick={p.onAddToList}>Add series</button><button className="btn ghost" onClick={p.onManageLists}>Manage lists</button></div>}</div>
-      {settings.showReadingTimer && <ReadingTimer series={lib.series} onOpenTime={p.onOpenTime} />}
+      <div className="folio-heading"><div>{p.collection && <span className="section-title">Your list</span>}<h1 className={p.collection ? "collection-title" : undefined} title={p.collection?.name}>{p.collection?.name ?? "Your Library"}</h1>{p.collection && <p className="small muted">{p.collection.seriesIds.length} series · Stored on this device</p>}</div>{!p.expanded && !p.collection && settings.showReadingTimer && <ReadingTimer compact series={lib.series} onOpenTime={p.onOpenTime} />}{p.collection && <div className="list-page-actions"><button className="btn primary" onClick={p.onAddToList}>Add series</button><button className="btn ghost" onClick={p.onManageLists}>Manage lists</button></div>}</div>
+      {p.expanded && settings.showReadingTimer && <ReadingTimer series={lib.series} onOpenTime={p.onOpenTime} />}
       <NowReading state={p.tab.state} series={tabSeries} onOpenSeries={p.onOpenSeries} onInspect={p.onInspect} />
 
       {dup && !p.query && (
@@ -158,7 +158,7 @@ export function HomeView(p: HomeProps) {
           <h2 className="section-title">Continue</h2>
           <div className="continue-card">
             <button className="icon-btn" style={{ width: "auto", height: "auto" }} onClick={() => p.onOpenSeries(hero.id)} aria-label={`Details for ${hero.title}`}>
-              <Cover coverId={hero.coverId} title={hero.title} size="md" />
+              <Cover coverId={hero.coverId} title={hero.title} size="md"><FormatBadge s={hero} /></Cover>
             </button>
             <div style={{ minWidth: 0 }}>
               <div className="featured-title">{hero.title}</div>
@@ -286,7 +286,7 @@ function EmptyState({ view, query, total, onManual }: { view: ViewId; query: str
     return (
       <div className="empty">
         <h2>No series tracked yet.</h2>
-        <p>Open a manhwa and it will appear here automatically.</p>
+        <p>Open a manhwa or web novel and it will appear here automatically.</p>
         <button className="btn" onClick={onManual}>Track a series manually</button>
       </div>
     );
