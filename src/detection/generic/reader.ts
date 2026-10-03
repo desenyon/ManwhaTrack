@@ -51,10 +51,25 @@ function inNoise(el: Element): boolean {
 export interface ReaderGuess {
   element: HTMLElement;
   imageCount: number;
-  via: "known-selector" | "image-cluster";
+  via: "known-selector" | "image-cluster" | "text-reader";
+}
+
+/** Require substantial prose in a focused reader, never a whole page or comment thread. */
+export function findTextReader(doc: Document): HTMLElement | null {
+  for (const el of qsa<HTMLElement>(doc, ".chapter-content, .chapter-inner, .reading-content, #chapter-content, #chapterContent, #chr-content, .cha-words, .text-content, [data-reader], article", 60)) {
+    if (inNoise(el) || NOISE_ANCESTOR.test(`${el.id} ${el.className}`)) continue;
+    const paragraphs = qsa(el, "p", 1500).filter(p => !inNoise(p) && (p.textContent?.trim().length ?? 0) >= 40);
+    const breaks = qsa(el, "br", 1500).length;
+    const prose = paragraphs.length >= 5 && paragraphs.reduce((n,p) => n + (p.textContent?.length ?? 0), 0) >= 1200;
+    const plainText = breaks >= 8 && (el.textContent?.trim().length ?? 0) >= 2000;
+    if ((prose || plainText) && qsa(el, "a", 200).length < Math.max(paragraphs.length, breaks) / 2) return el;
+  }
+  return null;
 }
 
 export function findReaderContainer(doc: Document): ReaderGuess | null {
+  const prose = findTextReader(doc);
+  if (prose) return { element: prose, imageCount: 0, via: "text-reader" };
   for (const sel of KNOWN_READER_SELECTORS) {
     const el = qs<HTMLElement>(doc, sel);
     if (!el) continue;
