@@ -3,7 +3,7 @@
 
 import type { SiteRule } from "../shared/types/settings";
 import type { DetectedSeries, DetectionEvidence, PageObservation, SiteAdapter } from "./types";
-import { detectGeneric } from "./generic/detector";
+import { detectGeneric, storyFormat } from "./generic/detector";
 import { findReaderContainer } from "./generic/reader";
 import { coverCandidates } from "./generic/cover";
 import { cssPath, qs, qsa } from "./metadata/dom";
@@ -115,7 +115,7 @@ function detectWithAdapter(adapter: SiteAdapter, doc: Document, url: URL): PageO
       const og = generic().series?.coverCandidates[0];
       if (og) series = { ...series, coverCandidates: [og] };
     }
-    if (series) { series.format ??= generic().series?.format; series.genres ??= generic().series?.genres; }
+    if (series) { series.format = adapter.format ?? series.format ?? generic().series?.format ?? storyFormat(doc, url, findReaderContainer(doc)); series.genres ??= generic().series?.genres; }
     const chapter = { ...res.chapter };
     if (adapter.normalizeChapterUrl) chapter.canonicalUrl = canonicalizeUrl(adapter.normalizeChapterUrl(url));
     if (!chapter.nextUrl || !chapter.prevUrl) {
@@ -151,7 +151,7 @@ function fillSeriesGaps(series: DetectedSeries, generic: DetectedSeries | undefi
   out.coverUrl ??= out.coverCandidates[0];
   if (!out.alternateTitles.length && generic?.alternateTitles.length) out.alternateTitles = generic.alternateTitles;
   out.storyEnded ??= generic?.storyEnded;
-  out.format ??= generic?.format;
+  out.format = adapter.format ?? out.format ?? generic?.format;
   out.genres ??= generic?.genres;
   return out;
 }
