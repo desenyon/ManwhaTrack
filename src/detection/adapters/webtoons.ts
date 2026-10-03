@@ -39,6 +39,7 @@ function chapterUrlFor(url: URL): string {
 
 export const webtoonsAdapter: SiteAdapter = {
   id: "webtoons",
+  format: "manhwa",
   hosts: ["webtoons.com"],
 
   detectPageKind(_doc, url) {
