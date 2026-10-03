@@ -1,0 +1,14 @@
+ManwhaTrack is a local-only reading tracker. No account, login, test credentials or developer server is required.
+
+1. Install the extension and click its toolbar action to open the Chrome side panel. On a fresh profile, the library is empty until a reading page is visited.
+2. Visit a publicly readable manhwa/manga series page, for example a title page on mangadex.org. Choose a freely available chapter in the desired language. The extension automatically saves supported series/chapter pages locally; opening a chapter is not treated as completion.
+3. Scroll through the actual reader. Progress updates in the side panel. Active reading time accumulates while the chapter is active and pauses when the page loses activity. Reaching the configured completion threshold marks the chapter finished. Progress can also be corrected manually in series details.
+4. Leave the chapter partway through. Click Resume in the library. It opens a separate browser window and restores the saved position when the reader content is available. Site layout changes or unavailable chapters can affect restoration.
+5. Click Expand library in the side panel. The expanded library has grid/list layouts, search, filters and series details. Create a personal list, open that list and click Add series to assign tracked items. Metadata and lists survive closing and reopening Chrome.
+6. Open Analytics in the expanded library. A new profile correctly shows little or no recorded activity. Read a chapter while active, return to Analytics and inspect the recorded time/activity. Charts use local events; earlier activity that was never measured is not manufactured.
+7. Open Settings & backup. Inspect General, Import & export, and Storage & privacy. Export a backup before testing destructive operations. Cached library records remain accessible offline; source chapters naturally still require their source site.
+8. Notifications are off by default. Enabling them requests the optional notifications permission. Automatic source-update checking can be disabled independently. Incognito tracking is off by default.
+
+Detection follows available DOM and metadata, so sites requiring authentication, blocking requests, or changing their markup may need manual correction or local site rules. Manual series tracking is a fallback in the library menu; it does not require credentials.
+
+Permissions are used solely for reading detection, the local library, direct source/cover requests, chapter checks and the optional notifications described in the listing. Executable code is bundled. No library or analytics data is sent to the developer.
