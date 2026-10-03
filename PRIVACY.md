@@ -4,7 +4,7 @@ ManwhaTrack is built so that your reading history never leaves your computer.
 
 ## What is stored, and where
 
-Everything ManwhaTrack knows — series, chapters, reading progress, history, notes, tags, ratings, covers and settings — is stored in your browser's local storage for the extension (IndexedDB and `chrome.storage.local`). It is not synced to your Google account and there is no ManwhaTrack server to send it to.
+Everything ManwhaTrack knows — series, chapters, reading progress, history, notes, tags, ratings, covers, reading-time measurements and settings — is stored in your browser's local storage for the extension (IndexedDB and `chrome.storage.local`). It is not synced to your Google account and there is no ManwhaTrack server to send it to.
 
 ## Network requests
 
@@ -18,7 +18,7 @@ ManwhaTrack makes network requests only to the reading sites you already use:
 
 These requests are sent without cookies. The only header ManwhaTrack adds is the site's own address as `Referer`, because many image hosts refuse requests without one.
 
-There is no analytics, telemetry, advertising, remote configuration, remote code, crash or error reporting, and no account.
+There is no usage telemetry, external analytics, advertising, remote configuration, remote code, crash or error reporting, and no account. The Analytics page calculates reading patterns entirely on your device from local reading events, minute-level active-time measurements and observed backlog snapshots. It does not contact an analytics service. Older undated reading totals are kept separately rather than assigned invented dates.
 
 ## What ManwhaTrack reads on pages
 
@@ -31,5 +31,5 @@ Incognito windows are ignored by default. If you turn on *Settings → Advanced 
 ## Your control
 
 - Export your whole library at any time (*Settings → Import & export*).
-- Clear reading history, cached covers or everything (*Settings → Storage & privacy*).
+- Clear reading history, cached covers or everything (*Settings → Storage & privacy*). Clearing history also clears dated analytics, while retaining chapter progress and lifetime reading-time totals.
 - Removing the extension deletes all of its local data.
