@@ -190,7 +190,7 @@ export function findDuplicates(series: Series[]): [Series, Series][] {
         const a = group[i]!;
         const b = group[j]!;
         const id = [a.id, b.id].sort().join("|");
-        if (seen.has(id) || a.keptSeparateFrom.includes(b.id) || b.keptSeparateFrom.includes(a.id)) continue;
+        if ((a.format ?? "manhwa") !== (b.format ?? "manhwa") || seen.has(id) || a.keptSeparateFrom.includes(b.id) || b.keptSeparateFrom.includes(a.id)) continue;
         seen.add(id);
         out.push(a.discoveredAt <= b.discoveredAt ? [a, b] : [b, a]);
       }
