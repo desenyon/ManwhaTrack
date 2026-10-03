@@ -59,7 +59,7 @@ export function LibraryFooter({ count, motion, onMotion }: { count: number; moti
   }, [count, ref]);
   const playing = motion === "on" || motion === "system" && !reduced;
   return <footer ref={ref} data-visible={visible} style={{ "--landscape-height": `${height}px` } as CSSProperties} className={`colophon ${count <= 3 ? "colophon-roomy" : count <= 10 ? "colophon-balanced" : "colophon-compact"}`}>
-    <div className="colophon-caption"><div><strong>Your collection, kept locally.</strong><p>Your library stays on this device.</p></div>
+    <div className="colophon-caption"><div><strong>Your collection, kept locally.</strong></div>
       <button className="btn sm ghost motion-control" aria-label={playing ? "Pause artwork animation" : "Play artwork animation"} title={!playing && motion === "system" && reduced ? "Your device prefers reduced motion. Play to enable artwork." : undefined} onClick={() => onMotion(playing ? "off" : "on")}><Icon name={playing ? "pause" : "play"} /><span>{playing ? "Pause" : "Play"}</span></button>
     </div>
     <div className="landscape-scene" aria-hidden="true"><img className="landscape-image" src="assets/violet-landscape.png" alt="" loading="lazy" /><span className="landscape-clouds" style={{ backgroundImage: "url(assets/violet-clouds.png)" }} /><span className="river-shimmer" /></div>
