@@ -29,6 +29,7 @@ export function pageIndicatorProgress(s: string): number | null {
 
 export const mangadexAdapter: SiteAdapter = {
   id: "mangadex",
+  format: "manhwa",
   hosts: ["mangadex.org"],
   updates: "mangadex-api",
 
