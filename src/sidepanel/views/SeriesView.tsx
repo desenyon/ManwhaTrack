@@ -24,7 +24,7 @@ import { shortChapterLabel } from "../../detection/normalization/chapter";
 import { updatesSupported } from "../../detection";
 import { CollectionMembership } from "../components/Collections";
 import { TagEditor } from "../components/TagEditor";
-import { continueText, SourceBadge } from "../components/SeriesItem";
+import { continueText, FormatBadge, SourceBadge } from "../components/SeriesItem";
 import { HandsScene } from "../components/Artwork";
 import { EventList } from "./HistoryView";
 import type { Actions } from "../useActions";
@@ -33,7 +33,7 @@ import type { useLibrary } from "../../ui/hooks";
 const CHAPTER_PAGE = 100;
 const HEALTH_TEXT = { healthy: "Healthy", stale: "Stale", failing: "Not responding", unknown: "Not checked yet" } as const;
 
-export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: string; lib: ReturnType<typeof useLibrary>; actions: Actions; onBack: () => void; onOpenSeries: (id: string) => void }) {
+export function SeriesView({ id, lib, actions, onBack, onOpenSeries, onOpenAnalytics }: { id: string; lib: ReturnType<typeof useLibrary>; actions: Actions; onBack: () => void; onOpenSeries: (id: string) => void; onOpenAnalytics: () => void }) {
   const s = lib.byId.get(id);
   const sources = useMemo(() => lib.sourcesBySeries.get(id) ?? [], [lib.sourcesBySeries, id]);
   const toast = useToast();
@@ -41,7 +41,7 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
   const [chapterError, setChapterError] = useState(false);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [dialog, setDialog] = useState<null | "title" | "aliases" | "cover" | "merge" | "progress" | { chapter: Chapter }>(null);
+  const [dialog, setDialog] = useState<null | "title" | "aliases" | "genres" | "cover" | "merge" | "progress" | { chapter: Chapter }>(null);
 
   const loadChapters = useCallback(async () => {
     try { setChapters(await listChapters(id)); setChapterError(false); setCoverStatus(await getCoverStatus(id)); }
@@ -114,7 +114,7 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
       <div className="detail-layout">
       <div className="detail-head">
         <button className="icon-btn" style={{ width: "auto", height: "auto" }} aria-label="Change cover" onClick={(e) => coverMenu(e.currentTarget)}>
-          <Cover coverId={s.coverId} title={s.title} size="lg" />
+          <Cover coverId={s.coverId} title={s.title} size="lg"><FormatBadge s={s} /></Cover>
         </button>
         <h1 style={{ minWidth: 0 }}>{s.title}</h1>
       </div>
@@ -167,9 +167,12 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
             <Icon name={s.favorite ? "starFill" : "star"} />
           </button></div>
         </div>
+        <div className="detail-format"><label htmlFor="format">Format</label><select id="format" className="select" value={s.format ?? "manhwa"} onChange={e => void save({format:e.target.value as Series["format"]}, {format:e.target.value as Series["format"]})}><option value="manhwa">Manhwa / comic</option><option value="novel">Web novel</option></select></div>
+        <div className="detail-field"><h3>Genres</h3><div className="detail-genre-value"><span className="small muted">{s.genres?.join(" · ") || "No genre metadata"}</span><button className="btn ghost sm" onClick={() => setDialog("genres")}>Edit genres</button></div></div>
         <div className="detail-field"><h3>Lists</h3><CollectionMembership seriesId={s.id} /></div>
         <div className="detail-field"><h3>Tags</h3><TagEditor tags={s.tags} suggestions={allTags} onChange={(tags) => void save({ tags }, { tags })} /></div>
         <dl className="kv detail-secondary"><dt>Reading time</dt><dd>{readTime > 0 ? `${formatDuration(readTime)} (active)` : "Not measured yet"}</dd><dt>Tracked since</dt><dd>{shortDate(s.discoveredAt)}</dd></dl>
+        <button className="btn ghost series-analytics-link" onClick={onOpenAnalytics}><Icon name="chart" />Reading analytics<Icon name="chevron" /></button>
       </section>
 
       <details className="panel detail-sources" open>
@@ -205,6 +208,7 @@ export function SeriesView({ id, lib, actions, onBack, onOpenSeries }: { id: str
       {dialog === "aliases" && (
         <TextDialog title="Alternate titles" initial={s.alternateTitles.join("\n")} multiline onClose={() => setDialog(null)} onSave={(v) => { const alternateTitles = v.split(/\n|;/).map((x) => x.trim()).filter(Boolean); return save({ alternateTitles }, { alternateTitles }); }} hint="One per line. Used for search and duplicate detection." />
       )}
+      {dialog === "genres" && <TextDialog title="Edit genres" initial={(s.genres ?? []).join("\n")} multiline onClose={() => setDialog(null)} hint="One per line. Your genres are kept when the source is detected again." onSave={v => { const genres = v.split(/\n|;/).map(x => x.trim()).filter(Boolean); return save({ genres }, { genres }); }} />}
       {dialog === "progress" && (
         <TextDialog
           title="Set reading progress"
