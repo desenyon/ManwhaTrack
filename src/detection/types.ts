@@ -20,6 +20,8 @@ export interface DetectedChapterLink {
 
 export interface DetectedSeries {
   title: string;
+  format?: "manhwa" | "novel";
+  genres?: string[];
   alternateTitles: string[];
   seriesUrl: string;
   canonicalSeriesUrl: string;
