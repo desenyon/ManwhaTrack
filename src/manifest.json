@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ManwhaTrack",
   "version": "0.0.0",
-  "description": "Automatically remembers the manhwa you read and where you stopped. Local-only: no account, no server.",
+  "description": "Automatically remembers the manhwa and web novels you read and where you stopped. Local-only: no account, no server.",
   "minimum_chrome_version": "120",
   "permissions": [
     "storage",
