@@ -17,7 +17,7 @@ import { getQueue } from "./repositories/queue";
 import { normalizeTitle } from "../detection/normalization/title";
 import { canonicalizeUrl, isSafeHttpUrl } from "../detection/normalization/url";
 
-export const EXPORT_VERSION = 4;
+export const EXPORT_VERSION = 5;
 const APP = "ManwhaTrack";
 
 type PortableSeries = Omit<Series, "summary" | "titleKeys" | "normalizedTitle">;
@@ -136,6 +136,7 @@ export const EXPORT_MIGRATIONS: Record<number, (f: Record<string, unknown>) => R
   1: (f) => ({ ...f, exportVersion: 2, schemaVersion: 2 }),
   2: (f) => ({ ...f, exportVersion: 3, schemaVersion: 3 }),
   3: (f) => ({ ...f, exportVersion: 4, schemaVersion: 4, collections: [] }),
+  4: (f) => ({ ...f, exportVersion: 5, schemaVersion: 6 }),
 };
 
 export type ParseResult = { ok: true; file: BackupFile; invalid: number } | { ok: false; error: string };
@@ -255,7 +256,8 @@ async function matchExistingTx(t: Tx, s: PortableSeries, sources: SeriesSource[]
     if (hit) return getSeriesTx(t, hit.seriesId);
   }
   const hits = await t.byIndex<Series>("series", "normalizedTitle", normalizeTitle(s.title));
-  return hits[0] ? getSeriesTx(t, hits[0].id) : undefined;
+  const hit = hits.find(x => (x.format ?? "manhwa") === (s.format ?? "manhwa"));
+  return hit ? getSeriesTx(t, hit.id) : undefined;
 }
 
 export async function previewImport(file: BackupFile, invalid = 0): Promise<ImportPreview> {
@@ -438,8 +440,18 @@ export async function applyImport(file: BackupFile, mode: ConflictMode, opts: { 
         }
       }
       for (const e of eventsBySeries.get(incoming.id) ?? []) {
-        if (await t.get("events", e.id)) continue;
-        await t.put("events", { ...e, seriesId: target.id, chapterId: e.chapterId ? chapterIdMap.get(e.chapterId) ?? e.chapterId : undefined });
+        const mappedChapter = e.chapterId ? chapterIdMap.get(e.chapterId) ?? e.chapterId : undefined;
+        const prior = await t.get<ReadingEvent>("events", e.id);
+        if (prior) {
+          // Minute buckets may have grown since the previous backup. Merge snapshots
+          // by their largest measured value, never add the same reading twice.
+          if (prior.seriesId === target.id && prior.chapterId === mappedChapter && prior.type === e.type &&
+              ((e.type === "time" && e.durationMs! > (prior.durationMs ?? 0)) || (e.type === "backlog" && e.timestamp > prior.timestamp))) {
+            await t.put("events", { ...e, seriesId:target.id, chapterId:mappedChapter });
+          }
+          continue;
+        }
+        await t.put("events", { ...e, seriesId: target.id, chapterId: mappedChapter });
       }
       if (incoming.currentChapterId) {
         const mapped = chapterIdMap.get(incoming.currentChapterId);
@@ -502,6 +514,8 @@ export async function applyImport(file: BackupFile, mode: ConflictMode, opts: { 
 function pickUserData(s: PortableSeries): Partial<Series> {
   return {
     title: s.title,
+    format: s.format,
+    genres: s.genres,
     alternateTitles: s.alternateTitles,
     status: s.status,
     favorite: s.favorite,
