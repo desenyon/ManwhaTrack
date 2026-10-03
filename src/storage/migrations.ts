@@ -7,7 +7,7 @@ import type { Chapter, ReadingEvent, Series, SeriesSource } from "../shared/type
 import { correctJoinedChapterLabel, parseChapterLabel } from "../detection/normalization/chapter";
 import { computeSeriesState } from "./summary";
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export type MigrationStep = (db: IDBDatabase, tx: IDBTransaction) => void;
 
@@ -48,7 +48,8 @@ export const MIGRATIONS: Record<number, MigrationStep> = {
     // Existing chapters have no guessed viewport: maxProgress is not a position.
     if (_db.version < 5) migrateRecords<Record<string, unknown>>(tx, "chapters", c => ({ ...c, progressRevision: c.progressRevision ?? 0, associationOverridden: c.associationOverridden === true }));
   },
-  5: (_db, tx) => repairJoinedChapterRecords(tx),
+  5: (db, tx) => { if (db.version < 6) repairJoinedChapterRecords(tx); },
+  6: (_db, tx) => repairJoinedChapterRecords(tx, true),
   2: (db, tx) => {
     // Version 3 combines chapter transforms in one cursor. Concurrent upgrade
     // cursors otherwise overwrite each other's snapshots during a 1 → 3 upgrade.
@@ -87,7 +88,7 @@ export function migrateRecords<T>(tx: IDBTransaction, storeName: string, fn: (re
 }
 
 /** Read all related records before writes, keeping the repair atomic and IDs intact. */
-function repairJoinedChapterRecords(tx: IDBTransaction): void {
+function repairJoinedChapterRecords(tx: IDBTransaction, addFormats = false): void {
   const chapters = tx.objectStore("chapters").getAll();
   const sources = tx.objectStore("sources").getAll();
   const series = tx.objectStore("series").getAll();
@@ -121,8 +122,9 @@ function repairJoinedChapterRecords(tx: IDBTransaction): void {
       tx.objectStore("sources").put(src);
     }
     for (const s of series.result as Series[]) {
-      if (!changed.has(s.id)) continue;
-      Object.assign(s, computeSeriesState(s, (chapters.result as Chapter[]).filter(c=>c.seriesId===s.id), (sources.result as SeriesSource[]).filter(src=>src.seriesId===s.id)));
+      if (!changed.has(s.id) && !addFormats) continue;
+      if (addFormats) { s.format = s.format === "novel" ? "novel" : "manhwa"; s.genres = Array.isArray(s.genres) ? s.genres : []; }
+      if (changed.has(s.id)) Object.assign(s, computeSeriesState(s, (chapters.result as Chapter[]).filter(c=>c.seriesId===s.id), (sources.result as SeriesSource[]).filter(src=>src.seriesId===s.id)));
       tx.objectStore("series").put(s);
     }
     for (const event of events.result as ReadingEvent[]) {
