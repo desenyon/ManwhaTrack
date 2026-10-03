@@ -51,6 +51,11 @@ export interface Settings {
   artworkMotion: "system" | "on" | "off";
   layout: LibraryLayout;
   expandedLayout: LibraryLayout;
+  expandedCardSize: "compact" | "comfortable" | "large";
+  ambientBackground: boolean;
+  showReadingTimer: boolean;
+  showFeaturedContinue: boolean;
+  showScrollbars: boolean;
   /** Where other Continue actions open. Resume uses a separate window; modifiers open a tab. */
   continueIn: "current" | "new";
   /** Fraction of the chapter reader that counts as finished. */
@@ -86,6 +91,11 @@ export const DEFAULT_SETTINGS: Settings = {
   artworkMotion: "system",
   layout: "list",
   expandedLayout: "grid",
+  expandedCardSize: "comfortable",
+  ambientBackground: true,
+  showReadingTimer: true,
+  showFeaturedContinue: true,
+  showScrollbars: false,
   continueIn: "current",
   completionThreshold: 0.85,
   showTrackingToast: true,
