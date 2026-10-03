@@ -14,9 +14,10 @@ import { mangaThemesiaAdapter } from "./adapters/mangathemesia";
 import { ruleAdapter } from "./adapters/rules";
 import { mangadexAdapter } from "./adapters/mangadex";
 import { mangaPlusAdapter } from "./adapters/mangaplus";
+import { novelsAdapter } from "./adapters/novels";
 import { tapasAdapter } from "./adapters/tapas";
 
-export const HOST_ADAPTERS: SiteAdapter[] = [webtoonsAdapter, mangadexAdapter, mangaPlusAdapter, tapasAdapter];
+export const HOST_ADAPTERS: SiteAdapter[] = [webtoonsAdapter, mangadexAdapter, mangaPlusAdapter, tapasAdapter, novelsAdapter];
 export const THEME_ADAPTERS: SiteAdapter[] = [madaraAdapter, mangaThemesiaAdapter];
 export const ALL_ADAPTERS: SiteAdapter[] = [...HOST_ADAPTERS, ...THEME_ADAPTERS];
 
@@ -48,7 +49,7 @@ export function updatesSupported(src: { adapterId?: string }): boolean {
 export function mightBeReadingPage(doc: Document, url: URL, rules: SiteRule[] = []): boolean {
   if (pickAdapterCheap(url, rules)) return true;
   const hay = `${url.pathname} ${url.search} ${doc.title}`.toLowerCase();
-  if (/(?:chapter|chap|episode|manhwa|manhua|manga|webtoon|comic|scans?|toon|\bch[-._/ ]?\d|\bep[-._/ ]?\d)/.test(hay)) return true;
+  if (/(?:chapter|chap|episode|manhwa|manhua|manga|webtoon|comic|novel|fiction|book|scans?|toon|\bch[-._/ ]?\d|\bep[-._/ ]?\d)/.test(hay)) return true;
   const og = qs(doc, 'meta[property="og:type"]')?.getAttribute("content") ?? "";
   if (/book|comic/i.test(og)) return true;
   return qsa(doc, 'a[href*="chapter"], a[href*="episode"], a[href*="/ch-"], a[href*="/ch/"]', 5).length >= 3;
@@ -114,6 +115,7 @@ function detectWithAdapter(adapter: SiteAdapter, doc: Document, url: URL): PageO
       const og = generic().series?.coverCandidates[0];
       if (og) series = { ...series, coverCandidates: [og] };
     }
+    if (series) { series.format ??= generic().series?.format; series.genres ??= generic().series?.genres; }
     const chapter = { ...res.chapter };
     if (adapter.normalizeChapterUrl) chapter.canonicalUrl = canonicalizeUrl(adapter.normalizeChapterUrl(url));
     if (!chapter.nextUrl || !chapter.prevUrl) {
@@ -149,6 +151,8 @@ function fillSeriesGaps(series: DetectedSeries, generic: DetectedSeries | undefi
   out.coverUrl ??= out.coverCandidates[0];
   if (!out.alternateTitles.length && generic?.alternateTitles.length) out.alternateTitles = generic.alternateTitles;
   out.storyEnded ??= generic?.storyEnded;
+  out.format ??= generic?.format;
+  out.genres ??= generic?.genres;
   return out;
 }
 
