@@ -20,7 +20,7 @@ describe("truthful reading analytics",()=>{
  });
  it("splits measured minutes at local midnight and keeps the session continuous",()=>{
   const input=sample();const midnight=dayStart(now);input.events=[time(input.series[0]!.id,midnight-30_000)];
-  const a=buildAnalytics(input,"7D",now);expect(a.days.find(d=>d.date===shiftDay(midnight,-1))?.minutes).toBe(.5);expect(a.days.find(d=>d.date===midnight)?.minutes).toBe(.5);expect(a.time).toBe(60_000);expect(a.sessions).toHaveLength(1);expect(a.currentStreak).toBe(2);
+  const a=buildAnalytics(input,"7D",now);expect(a.days.find(d=>d.date===shiftDay(midnight,-1))?.minutes).toBe(.5);expect(a.days.find(d=>d.date===midnight)?.minutes).toBe(.5);expect(a.time).toBe(60_000);expect(a.sessions).toHaveLength(1);expect(a.week.sessions).toBe(1);expect(a.currentStreak).toBe(2);
  });
  it("groups active sessions across series and starts another after a 15-minute gap",()=>{
   const times=[time("a",now-3_600_000),time("b",now-3_000_000),time("a",now-1_800_000)];
@@ -53,4 +53,27 @@ it("retention excludes readers still accumulating history and distinguishes drop
  input.series.push(droppedEarly,droppedLater);
  const r=buildAnalytics(input,"ALL",now).retention;
  expect(r[0]).toMatchObject({threshold:10,total:2,reached:1});expect(r[1]).toMatchObject({threshold:25,total:2,reached:1});expect(r[2]).toMatchObject({threshold:50,total:2,reached:0});
+});
+
+
+it("ALL includes backlog history even before any timed reading",()=>{
+ const input=sample(),s=input.series[0]!;const at=shiftDay(dayStart(now),-20);
+ input.events=[{id:"backlog-only",seriesId:s.id,type:"backlog",timestamp:at,backlogCount:7}];
+ const a=buildAnalytics(input,"ALL",now);expect(a.start).toBe(at);expect(a.days).toHaveLength(21);expect(a.days[0]?.backlog).toBe(7);
+});
+it("deduplicates update observations across sources without losing a completed or opened copy",()=>{
+ const input=sample(),s=input.series[0]!,c=input.chapters[0]!;
+ c.observedReleaseAt=now-40*86_400_000;c.firstOpenedAt=now-39*86_400_000;c.completedAt=now-38*86_400_000;
+ input.chapters.push({...c,id:"late-copy",sourceId:"other",observedReleaseAt:now-1000,firstOpenedAt:undefined,completedAt:undefined});
+ expect(buildAnalytics(input,"30D",now).releases).toBe(0);
+ const all=buildAnalytics(input,"ALL",now);expect(all.releases).toBe(1);expect(all.releasesRead).toBe(1);expect(all.releaseDelay).toBe(86_400_000);
+});
+it("does not count a session ending exactly at the start of the chosen period",()=>{
+ const input=sample(),s=input.series[0]!;const start=shiftDay(dayStart(now),-6);
+ input.events=[time(s.id,start-60_000)];const a=buildAnalytics(input,"7D",now);
+ expect(a.time).toBe(0);expect(a.sessions).toHaveLength(0);expect(a.days.every(d=>d.sessions===0)).toBe(true);
+});
+it("does not label floating-point roundoff as historical reading",()=>{
+ const input=sample(),s=input.series[0]!;s.totalReadingTimeMs=1000.1000000001;input.events=[time(s.id,now-2000,1000.1)];
+ expect(buildAnalytics(input,"30D",now).historicalTime).toBe(0);
 });
