@@ -8,7 +8,7 @@ export interface SectionProps {
 }
 
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
-  return <input type="checkbox" role="switch" aria-label={label} checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ width: 16, height: 16 }} />;
+  return <button type="button" className="setting-toggle" role="switch" aria-label={label} aria-checked={checked} onClick={() => onChange(!checked)}><span className="toggle-track" aria-hidden="true"><span /></span><span aria-hidden="true">{checked ? "On" : "Off"}</span></button>;
 }
 
 export function Setting({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
@@ -39,9 +39,10 @@ export function GeneralSection({ settings, update }: SectionProps) {
 
   return (
     <>
-      <h1>General</h1>
-      <p className="lead">ManwhaTrack tracks series and chapters automatically as you read.</p>
+      <h1>Settings</h1>
+      <p className="lead">Appearance, reading behavior and local update checks.</p>
 
+      <section className="settings-section" aria-labelledby="appearance-heading"><h2 id="appearance-heading">Appearance</h2>
       <Setting title="Theme">
         <select className="select" aria-label="Theme" value={settings.theme} onChange={(e) => void update({ theme: e.target.value as Settings["theme"] })}>
           <option value="system">System</option>
@@ -54,12 +55,34 @@ export function GeneralSection({ settings, update }: SectionProps) {
           <option value="system">System</option><option value="on">On</option><option value="off">Off</option>
         </select>
       </Setting>
+      <Setting title="Background scenery" desc="Quiet pixel scenery in the outer margins of the expanded library on large screens.">
+        <Toggle label="Background scenery" checked={settings.ambientBackground} onChange={v => void update({ ambientBackground: v })} />
+      </Setting>
+      <Setting title="Show scrollbars" desc="Scrolling with your wheel, trackpad and keyboard works either way.">
+        <Toggle label="Show scrollbars" checked={settings.showScrollbars} onChange={v => void update({ showScrollbars: v })} />
+      </Setting>
+      </section>
+      <section className="settings-section" aria-labelledby="layout-heading"><h2 id="layout-heading">Library layout</h2>
       <Setting title="Sidebar layout">
         <select className="select" aria-label="Sidebar layout" value={settings.layout} onChange={(e) => void update({ layout: e.target.value as Settings["layout"] })}>
           <option value="list">Compact list</option>
           <option value="grid">Grid</option>
         </select>
       </Setting>
+      <Setting title="Expanded library layout">
+        <select className="select" aria-label="Expanded library layout" value={settings.expandedLayout} onChange={e => void update({ expandedLayout: e.target.value as Settings["expandedLayout"] })}><option value="grid">Cover cards</option><option value="list">Compact list</option></select>
+      </Setting>
+      <Setting title="Cover card size" desc="Applies to the expanded library. Cards keep a readable width when a list has only a few series.">
+        <select className="select" aria-label="Cover card size" value={settings.expandedCardSize} onChange={e => void update({ expandedCardSize: e.target.value as Settings["expandedCardSize"] })}><option value="compact">Compact</option><option value="comfortable">Comfortable</option><option value="large">Large</option></select>
+      </Setting>
+      <Setting title="Show featured Continue" desc="Show the hands artwork and most recently read series in Continue. Personal lists stay focused on their series.">
+        <Toggle label="Show featured Continue" checked={settings.showFeaturedContinue} onChange={v => void update({ showFeaturedContinue: v })} />
+      </Setting>
+      <Setting title="Show reading timer" desc="Hide or show the library timer. Active reading time continues to be recorded locally.">
+        <Toggle label="Show reading timer" checked={settings.showReadingTimer} onChange={v => void update({ showReadingTimer: v })} />
+      </Setting>
+      </section>
+      <section className="settings-section" aria-labelledby="reading-heading"><h2 id="reading-heading">Reading</h2>
       <Setting title="Continue opens in" desc="For other chapter actions in the sidebar. Resume opens a separate window. Ctrl/⌘-click or middle-click opens a new tab.">
         <select className="select" aria-label="Continue opens in" value={settings.continueIn} onChange={(e) => void update({ continueIn: e.target.value as Settings["continueIn"] })}>
           <option value="current">Current tab</option>
@@ -76,8 +99,8 @@ export function GeneralSection({ settings, update }: SectionProps) {
       <Setting title="Show “Tracking …” confirmation" desc="A small note with Undo in the page corner when a new series is added.">
         <Toggle label="Show tracking confirmation" checked={settings.showTrackingToast} onChange={(v) => void update({ showTrackingToast: v })} />
       </Setting>
-
-      <h2>New chapters</h2>
+      </section>
+      <section className="settings-section" aria-labelledby="updates-heading"><h2 id="updates-heading">New chapters</h2>
       <Setting title="Check tracked sources occasionally" desc="While Chrome is open, ManwhaTrack requests series pages directly from their sites — a few per run, one per site, with longer waits after errors.">
         <Toggle label="Check for new chapters" checked={settings.updateChecks} onChange={(v) => void update({ updateChecks: v })} />
       </Setting>
@@ -98,6 +121,7 @@ export function GeneralSection({ settings, update }: SectionProps) {
           <option value="all">All tracked series</option>
         </select>
       </Setting>
+      </section>
     </>
   );
 }
