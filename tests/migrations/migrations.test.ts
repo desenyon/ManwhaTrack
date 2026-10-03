@@ -127,3 +127,12 @@ it("repairs version 4 joined chapter labels, summaries and events without losing
   expect((await getAll(upgraded,"events") as {chapterLabel:string}[])[0]?.chapterLabel).toBe("Chapter 324");
   upgraded.close();
 });
+
+it("upgrades v5 and earlier libraries to format-aware records without guessing dated reading",async()=>{
+ for(const version of [1,4,5]) {
+  const name=`format-${crypto.randomUUID()}`;const old=await open(name,version,MIGRATIONS);
+  const series=createSeries({title:"Legacy",now:123});const raw:Partial<typeof series>={...series};delete raw.format;delete raw.genres;raw.totalReadingTimeMs=42_000;raw.notes="Keep this";
+  await put(old,"series",raw);old.close();const next=await open(name,SCHEMA_VERSION,MIGRATIONS);
+  const rows=await getAll(next,"series");expect(rows).toEqual([expect.objectContaining({id:series.id,format:"manhwa",genres:[],totalReadingTimeMs:42_000,notes:"Keep this",discoveredAt:123})]);expect(await getAll(next,"events")).toEqual([]);next.close();
+ }
+});
