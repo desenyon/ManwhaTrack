@@ -6,7 +6,7 @@ import { breadcrumbs, canonicalLink, cssPath, hrefOf, jsonLd, labelledValue, ldS
 import { chapterLabelFromUrl, parseChapterLabel } from "../normalization/chapter";
 import { cleanSeriesTitle, isPlausibleTitle } from "../normalization/title";
 import { canonicalizeUrl, inferSeriesUrlFromChapterUrl, sourceHost, toUrl } from "../normalization/url";
-import { findReaderContainer } from "./reader";
+import { findReaderContainer, type ReaderGuess } from "./reader";
 import { scanLinks } from "./links";
 import { coverCandidates } from "./cover";
 
@@ -96,7 +96,7 @@ export function detectGeneric(doc: Document, url: URL): PageObservation {
       prevUrl: links.prevUrl,
     };
     const series = seriesFromChapterPage(doc, url, crumbs, headingText, ogTitle, docTitle, site, links.chapterList);
-    if (series) { series.format = reader?.via === "text-reader" ? "novel" : "manhwa"; series.genres = extractGenres(doc); }
+    if (series) { series.format = storyFormat(doc, url, reader); series.genres = extractGenres(doc); }
     if (!series) ce.push({ signal: "no-series-title", weight: -0.25 });
     else ce.push({ signal: "series-identified", weight: 0.05, detail: series.title });
     return {
@@ -183,6 +183,18 @@ export function extractGenres(doc: Document): string[] {
   return value ? [...new Set(value.split(/[,;|•/]/).map(s => s.trim()).filter(s => s.length > 1 && s.length <= 40))].slice(0, 20) : [];
 }
 
+/** Metadata outranks shared site routes; ambiguous landing pages don't change a saved format. */
+export function storyFormat(doc: Document, url: URL, reader: ReaderGuess | null = null): DetectedSeries["format"] {
+  const type = labelledValue(doc, /^(?:type|format|content type)\s*:?/i) ?? "";
+  if (/\bnovel\b/i.test(type)) return "novel";
+  if (/\b(?:manhwa|manga|manhua|comic|webtoon)\b/i.test(type)) return "manhwa";
+  if (reader?.via === "text-reader") return "novel";
+  if (/\/(?:novels?|fiction|book)\//i.test(url.pathname)) return "novel";
+  if (reader && reader.imageCount >= 2) return "manhwa";
+  if (/\/(?:manga|manhwa|manhua|comics?|webtoons?)\//i.test(url.pathname)) return "manhwa";
+  return undefined;
+}
+
 export function extractStoryEnded(doc: Document): boolean | undefined {
   const v = labelledValue(doc, STATUS_LABELS);
   if (!v) return undefined;
@@ -214,7 +226,7 @@ function extractSeriesGeneric(
   const alts = extractAltTitles(doc).filter((a) => a.toLowerCase() !== title.toLowerCase());
   return {
     title,
-    format: /\/(?:novels?|fiction|book)\//i.test(url.pathname) || /novel/i.test(labelledValue(doc, /^type\s*:?/i) ?? "") ? "novel" : "manhwa",
+    format: storyFormat(doc, url),
     genres: extractGenres(doc),
     alternateTitles: alts,
     seriesUrl: url.href,
