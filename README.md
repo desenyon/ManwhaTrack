@@ -6,7 +6,7 @@
 
 **Open a manhwa. It remembers. Come back and continue in one click.**
 
-A Chrome extension that tracks your manhwa, manga and webtoon reading automatically —<br>
+A Chrome extension that tracks your manhwa, manga, webtoon and web novel reading automatically —<br>
 series, chapters, progress and covers — and keeps every bit of it on your own device.
 
 [![CI](https://github.com/desenyon/ManwhaTrack/actions/workflows/ci.yml/badge.svg)](https://github.com/desenyon/ManwhaTrack/actions/workflows/ci.yml)
@@ -32,7 +32,7 @@ Reading across a handful of sites means remembering which chapter you reached, w
 - **No adding.** Visit a series or open a chapter and it's in your library, cover included.
 - **Honest progress.** Opening a chapter isn't finishing it. A chapter counts as read when you reach the end of the reader, or click the site's *Next* button.
 - **One click back.** *Continue* takes you to the next chapter after the last one you finished — or back into the one you left half-way.
-- **Yours alone.** No account, no server, no analytics. The library lives in your browser's local database and works offline.
+- **Yours alone.** No account, no server, no tracking telemetry. The library lives in your browser's local database and works offline.
 
 ## Features
 
@@ -111,9 +111,22 @@ Optional update checks go straight to each site — a few per run, one per site,
 - Choose **Lists / All → Create / manage lists** to create, rename or delete lists and choose their series. Use **Assign to lists** in a series menu, details, or a multiple selection. A series can belong to several lists; deleting a list preserves its reading records.
 - Add arbitrary tags in series details, or use **Add tag** for a multiple selection. Tags are searchable and available in Filters. **New** shows known unread chapters for series you have actively read with Reading status; Continue also displays new-chapter counts.
 - Click **Expand library** beside the header menu for the full local library tab, with a navigation rail at wide widths. Resume opens a separate reading window; other Continue destinations open a reading tab so the library remains available. Modifier or middle-click opens a new tab.
-- Chapter and reading-state chips keep compact rows readable; source badges retain the original hostname in their tooltip. Expanded details separate metadata, sources and the chapter timeline into columns.
-- The timer below **Your library** measures active reading and pauses when the chapter loses focus, the reader leaves view, or you are idle for 90 seconds. Open **Time tracking** beside it or from the expanded navigation rail for locally saved totals by series and chapter. Closing the browser preserves recorded totals; the live session clock starts fresh.
+- Inline chapter and reading facts keep rows readable; a small cover label distinguishes novels from manhwa. Source labels retain the original hostname in their tooltip. Expanded details separate metadata, sources and the chapter timeline into columns.
+- The compact timer beside **Your Library** measures active reading and pauses when the chapter loses focus, the reader leaves view, or you are idle for 90 seconds. Open **Time tracking** beside it or from the expanded navigation rail for locally saved totals by series and chapter. Closing the browser preserves recorded totals; the live session clock starts fresh.
 - Bundled engraved artwork has independent hand, cloud, bridge and water movement. It pauses when hidden or off-screen. **Play / Pause** in the footer controls motion; **Settings → General → Artwork motion** also offers System, On and Off. System respects reduced motion; explicit Play enables it. The bridge height responds to window height and the space occupied by the visible library.
+
+## Local reading analytics
+
+Open **Analytics** from the expanded library navigation or the sidebar menu. **Reading analytics** in series details opens a focused view of that title. Activity heatmaps, reading-time graphs, sessions, time of day, backlog snapshots, pace, retention, genre/source breakdowns and historical milestones are calculated entirely on your device.
+
+- Dated active time is recorded from version 1.2.0 onward. Earlier chapter totals remain intact but cannot be assigned invented dates, hours or sessions.
+- Activity counts automatic completions, rather than bulk manual progress corrections. Sessions group measured reading with gaps of no more than 15 minutes. Hourly activity uses minute-level measurements.
+- Backlog means known new chapters waiting; its trend builds from dated local snapshots. Catch-up estimates use measured chapter times and recent completion pace.
+- Update timing means **first observed after an established catalog**, not the publisher's release date. Initial catalogs do not count as newly released chapters.
+- Retention excludes active series that have not yet accumulated enough observed chapters. Genre analysis requires detected or manually entered genres; arbitrary tags are not treated as genres.
+- Backups include dated measurements, format labels, genres and backlog snapshots. Clearing reading history also clears dated analytics, while retaining the library, chapter progress and lifetime chapter time.
+
+Web novels use the same local progress, Resume, lists, tags, cover caching and backup system. Generic detection recognizes substantial paragraph readers; platform templates avoid mistaking opaque chapter IDs for chapter numbers. Protected, unrendered or unusual readers may need local site rules or manual correction. Template fixtures and local browser flows are tested; universal compatibility with every novel site is not claimed.
 
 ## Supported sites
 
@@ -121,9 +134,9 @@ ManwhaTrack recognizes pages in three layers, from most to least specific:
 
 | | Covers | How |
 | --- | --- | --- |
-| **Site adapters** | webtoons.com (Originals & Canvas), Tapas, MangaDex, MANGA Plus | Purpose-built readers for each site, including paged readers ("page 3 / 18") |
+| **Site adapters** | webtoons.com (Originals & Canvas), Tapas, MangaDex, MANGA Plus, Royal Road and Webnovel reading templates | Purpose-built readers for each site, including paged readers ("page 3 / 18") |
 | **Theme adapters** | Sites built on the Madara and MangaThemesia WordPress themes | Matched by page structure, whatever the domain |
-| **Generic detector** | Everything else | Scores URL patterns, reader image stacks, breadcrumbs, next/previous links, chapter lists, structured data and titles |
+| **Generic detector** | Everything else | Scores URL patterns, reader image stacks or substantial prose, breadcrumbs, next/previous links, chapter lists, structured data and titles |
 
 Only confident detections are saved automatically; a borderline page shows a one-click **Track** button instead. If a site isn't recognized well, the Detection Inspector explains why and *Settings → Site rules* lets you point ManwhaTrack at the right elements.
 
@@ -155,7 +168,7 @@ Then load the `dist/` folder as above. `npm run launch` opens a separate Chrome 
 
 > **Your library is stored on this device. ManwhaTrack has no account and no server.**
 
-ManwhaTrack talks only to the reading sites you use — to read the page you opened, to download a series cover once, and (if enabled) to check tracked series for new chapters. There are no analytics, no telemetry, no remote code and no error reporting. Incognito windows are ignored unless you turn that on. See [PRIVACY.md](PRIVACY.md) for details.
+ManwhaTrack talks only to the reading sites you use — to read the page you opened, to download a series cover once, and (if enabled) to check tracked series for new chapters. Reading analytics are computed locally. There is no telemetry, remote code or external error reporting. Incognito windows are ignored unless you turn that on. See [PRIVACY.md](PRIVACY.md) for details.
 
 <details>
 <summary><b>Permissions and why each is needed</b></summary>
