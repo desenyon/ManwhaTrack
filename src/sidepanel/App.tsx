@@ -24,6 +24,9 @@ import { ShortcutsHelp } from "./components/ShortcutsHelp";
 import { Brand } from "../ui/Brand";
 import { useCollections } from "../ui/useCollections";
 import { CollectionsDialog, CollectionAssignmentDialog } from "./components/Collections";
+import type { Collection } from "../shared/types/collections";
+import { MarginScenery } from "./components/Artwork";
+import { assignCollections } from "../storage/repositories/collections";
 
 type Route = { name: "home" } | { name: "series"; id: string } | { name: "inspector" } | { name: "history" } | { name: "time" };
 
@@ -49,7 +52,10 @@ export function App({ expanded = false }: { expanded?: boolean }) {
   const collections = useCollections();
   const [settings, updateSettings] = useSettings();
   useTheme(settings.theme);
-  useEffect(() => { document.documentElement.dataset.artworkMotion = settings.artworkMotion; }, [settings.artworkMotion]);
+  useEffect(() => {
+    document.documentElement.dataset.artworkMotion = settings.artworkMotion;
+    document.documentElement.dataset.scrollbars = settings.showScrollbars ? "visible" : "hidden";
+  }, [settings.artworkMotion, settings.showScrollbars]);
   const tab = useActiveTab();
   const actions = useActions(lib, expanded ? { ...settings, continueIn: "new" } : settings, expanded ? undefined : tab.tabId);
 
@@ -69,6 +75,7 @@ export function App({ expanded = false }: { expanded?: boolean }) {
   const [manual, setManual] = useState<{ title?: string; url?: string }>();
   const [help, setHelp] = useState(false);
   const [manageLists, setManageLists] = useState(false);
+  const [editingList, setEditingList] = useState<Collection>();
   const [assignLists, setAssignLists] = useState<string[]>();
   const searchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -271,6 +278,7 @@ export function App({ expanded = false }: { expanded?: boolean }) {
         return;
       }
       if (route.name !== "home") return;
+      if (e.target instanceof HTMLElement && e.target.closest(".library-rail")) return;
       const idx = visible.findIndex((s) => s.id === focusedId);
       const move = (d: number) => {
         e.preventDefault();
@@ -322,7 +330,7 @@ export function App({ expanded = false }: { expanded?: boolean }) {
   };
 
   return (
-    <div className={`app${expanded ? " expanded" : ""}`}>
+    <>{expanded && settings.ambientBackground && <MarginScenery />}<div className={`app${expanded ? " expanded" : ""}`} data-card-size={settings.expandedCardSize}>
       {(route.name === "home" || expanded) && (
         <header className="topbar">
           <Brand />
@@ -346,16 +354,17 @@ export function App({ expanded = false }: { expanded?: boolean }) {
         </header>
       )}
       {expanded && <aside className="library-rail" aria-label="Library navigation">
-        <span className="section-title">Library</span>
-        {[{ id: "continue" as ViewId, label: "Continue" }, { id: "new" as ViewId, label: "New chapters" }, ...MORE_VIEWS].map(v => <button key={v.id} aria-pressed={route.name === "home" && view === v.id} onClick={() => { setRoute({ name: "home" }); setQuery(""); setView(v.id); }}>{v.label}{counts[v.id] ? <span className="count">{counts[v.id]}</span> : null}</button>)}
-        <button aria-pressed={route.name === "time"} onClick={openTime}><Icon name="clock" />Time tracking</button>
-        <div className="rail-heading"><span className="section-title">Your lists</span><button className="icon-btn" aria-label="Create or manage lists" onClick={() => setManageLists(true)}><Icon name="plus" /></button></div>
-        {collections.collections.map(c => <button key={c.id} aria-pressed={route.name === "home" && currentCollection?.id === c.id} onClick={() => openCollection(c.id)}><span className="truncate">{c.name}</span><span className="count">{c.seriesIds.length}</span></button>)}
-        {!collections.collections.length && <p className="small muted">Create lists to organize your library.</p>}
-        <hr className="divider" /><button onClick={() => void chrome.runtime.openOptionsPage()}>Settings & backup</button>
-        <p className="small faint">Stored on this device.<br />No account. No server.</p>
+        <div className="rail-group"><h2 className="section-title">Library</h2>
+          {[{ id: "continue" as ViewId, label: "Continue" }, { id: "new" as ViewId, label: "New chapters" }, { id: "all" as ViewId, label: "All series" }, { id: "favorites" as ViewId, label: "Favorites" }].map(v => <button key={v.id} aria-pressed={route.name === "home" && view === v.id} onClick={() => { setRoute({ name: "home" }); setQuery(""); setFilters(NO_FILTERS); setView(v.id); }}><span>{v.label}</span>{counts[v.id] ? <span className="count">{counts[v.id]}</span> : null}</button>)}
+          <details className="rail-more" open={route.name === "home" && MORE_VIEWS.some(v => v.id === view && !["all", "favorites"].includes(v.id))}><summary>More views</summary>{MORE_VIEWS.filter(v => !["all", "favorites"].includes(v.id)).map(v => <button key={v.id} aria-pressed={route.name === "home" && view === v.id} onClick={() => { setRoute({ name: "home" }); setQuery(""); setFilters(NO_FILTERS); setView(v.id); }}><span>{v.label}</span>{counts[v.id] ? <span className="count">{counts[v.id]}</span> : null}</button>)}</details>
+        </div>
+        <div className="rail-group rail-lists"><div className="rail-heading"><h2 className="section-title">Your lists</h2><button className="icon-btn" aria-label="Create or manage lists" onClick={() => setManageLists(true)}><Icon name="plus" /></button></div>
+          {collections.collections.map(c => <button key={c.id} aria-pressed={route.name === "home" && currentCollection?.id === c.id} onClick={() => openCollection(c.id)}><span className="truncate">{c.name}</span><span className="count">{c.seriesIds.length}</span></button>)}
+          {!collections.collections.length && <button className="rail-create" onClick={() => setManageLists(true)}>Create a list</button>}
+        </div>
+        <div className="rail-group rail-tools"><button aria-pressed={route.name === "time"} onClick={openTime}><Icon name="clock" />Time tracking</button><button onClick={() => void chrome.runtime.openOptionsPage()}><Icon name="settings" />Settings & backup</button><p className="small faint">Stored on this device.</p></div>
       </aside>}
-      <main className="scroll" ref={scrollRef} key={route.name === "series" ? route.id : route.name}>
+      <main className="scroll" aria-label="Library content" tabIndex={0} ref={scrollRef} key={route.name === "series" ? route.id : route.name}>
         {route.name === "home" && (
           <HomeView
             expanded={expanded}
@@ -379,6 +388,7 @@ export function App({ expanded = false }: { expanded?: boolean }) {
             onReloadCollections={() => void collections.reload()}
             onOpenCollection={openCollection}
             onManageLists={() => setManageLists(true)}
+            onAddToList={() => currentCollection && setEditingList(currentCollection)}
             onOpenTime={openTime}
             focusedId={focusedId}
             setFocusedId={setFocusedId}
@@ -403,11 +413,12 @@ export function App({ expanded = false }: { expanded?: boolean }) {
       </main>
       {menu && <Menu state={menu} onClose={() => setMenu(null)} />}
       {palette && <CommandPalette commands={commands} entries={entries} byId={lib.byId} onContinue={(s) => void actions.continueSeries(s)} onClose={() => setPalette(false)} />}
-      {manual && <ManualSeriesDialog initial={manual} onClose={() => setManual(undefined)} onAdded={async (series) => { await lib.reload(); setManual(undefined); openSeries(series.id); }} />}
+      {manual && <ManualSeriesDialog initial={manual} onClose={() => setManual(undefined)} onAdded={async (series) => { if (currentCollection) await assignCollections([series.id], [{ collectionId: currentCollection.id, included: true }]); await lib.reload(); setManual(undefined); openSeries(series.id); }} />}
       {help && <ShortcutsHelp settings={settings} onClose={() => setHelp(false)} />}
       {manageLists && <CollectionsDialog onClose={() => setManageLists(false)} onOpen={openCollection} />}
+      {editingList && <CollectionsDialog collection={editingList} onClose={() => setEditingList(undefined)} onManual={() => void openManual()} />}
       {assignLists && <CollectionAssignmentDialog seriesIds={assignLists} onClose={() => setAssignLists(undefined)} />}
-    </div>
+    </div></>
   );
 }
 
