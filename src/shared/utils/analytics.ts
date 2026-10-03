@@ -36,7 +36,8 @@ export function buildAnalytics(input: AnalyticsInput, range: AnalyticsRange = "3
   const chapterById = new Map(input.chapters.map(c => [c.id,c]));
   const events = input.events.filter(e => byId.has(e.seriesId) && Number.isFinite(e.timestamp) && e.timestamp <= now);
   const time = events.filter(e => e.type === "time" && e.durationMs! > 0 && e.durationMs! <= 60_000 && Number.isFinite(e.startedAt) && e.durationMs! <= e.timestamp - e.startedAt!);
-  const earliest = events.reduce((first,e) => e.type === "time" || e.type === "completed" ? Math.min(first,e.startedAt ?? e.timestamp) : first, now);
+  const firstEvent = events.reduce((first,e) => e.type === "time" || e.type === "completed" || e.type === "backlog" ? Math.min(first,e.startedAt ?? e.timestamp) : first, now);
+  const earliest = input.chapters.reduce((first,c) => byId.has(c.seriesId) && !c.inferred && c.observedReleaseAt !== undefined ? Math.min(first,c.observedReleaseAt) : first,firstEvent);
   const start = rangeStart(range, now, earliest);
   // Manual bulk corrections aren't evidence of reading on that day. Canonical chapter
   // identity prevents two sources of the same chapter inflating daily completions.
@@ -87,7 +88,7 @@ export function buildAnalytics(input: AnalyticsInput, range: AnalyticsRange = "3
     const day = daily.get(dayStart(e.timestamp)); if (day) { day.chapters++; addTitle(day,e.seriesId); }
     seriesFinished.set(e.seriesId,(seriesFinished.get(e.seriesId) ?? 0)+1);
   }
-  const selectedSessions = sessions.filter(s => s.end >= start && s.start <= now);
+  const selectedSessions = sessions.filter(s => s.end > start && s.start < now);
   for (const s of selectedSessions) { const day = daily.get(dayStart(Math.max(start,s.start))); if (day) day.sessions++; }
   const sessionDurations = selectedSessions.map(() => 0);
   let sessionIndex = 0;
@@ -119,8 +120,16 @@ export function buildAnalytics(input: AnalyticsInput, range: AnalyticsRange = "3
   while (activeDays.includes(day)) { currentStreak++; day=shiftDay(day,-1); }
   const pace = [7,30,90].map(days => { const since=shiftDay(dayStart(now),-(days-1)); return { days, value:finished.filter(e=>e.timestamp>=since).length/days }; });
   const ranking = series.map(s => ({ series:s,time:seriesTime.get(s.id) ?? 0,chapters:seriesFinished.get(s.id) ?? 0 })).filter(r=>r.time>0 || r.chapters>0).sort((a,b)=>b.time-a.time || b.chapters-a.chapters);
-  const releases = input.chapters.filter(c => byId.has(c.seriesId) && !c.inferred && c.observedReleaseAt !== undefined && c.observedReleaseAt >= start && c.observedReleaseAt <= now);
-  const uniqueReleases = [...new Map(releases.map(c=>[`${c.seriesId}:${c.key}`,c])).values()];
+  const releases = new Map<string,Chapter>();
+  for (const c of input.chapters.filter(c => byId.has(c.seriesId) && !c.inferred && c.observedReleaseAt !== undefined && c.observedReleaseAt <= now)) {
+    const key = `${c.seriesId}:${c.key}`, previous = releases.get(key);
+    releases.set(key, previous ? { ...previous,
+      observedReleaseAt: Math.min(previous.observedReleaseAt!,c.observedReleaseAt!),
+      firstOpenedAt: previous.firstOpenedAt === undefined ? c.firstOpenedAt : c.firstOpenedAt === undefined ? previous.firstOpenedAt : Math.min(previous.firstOpenedAt,c.firstOpenedAt),
+      completedAt: previous.completedAt ?? c.completedAt,
+    } : c);
+  }
+  const uniqueReleases = [...releases.values()].filter(c => c.observedReleaseAt! >= start);
   const delays = uniqueReleases.filter(c=>c.firstOpenedAt !== undefined && c.firstOpenedAt >= c.observedReleaseAt!).map(c=>({ seriesId:c.seriesId,delay:c.firstOpenedAt!-c.observedReleaseAt! }));
   const genreRows = [...new Set(series.flatMap(s=>s.genres ?? []))].map(genre => {
     const cohort=series.filter(s=>s.genres?.includes(genre)); const rated=cohort.filter(s=>s.personalRating !== undefined);
@@ -139,7 +148,7 @@ export function buildAnalytics(input: AnalyticsInput, range: AnalyticsRange = "3
   const weekdays=Array<number>(7).fill(0); for(const d of daily.values()) weekdays[new Date(d.date).getDay()]!+=d.minutes;
   const topHour=hours.some(Boolean) ? hours.indexOf(Math.max(...hours)) : undefined;
   const topDay=weekdays.some(Boolean) ? weekdays.indexOf(Math.max(...weekdays)) : undefined;
-  const historicalTime=Math.max(0,series.reduce((n,s)=>n+s.totalReadingTimeMs,0)-time.reduce((n,e)=>n+e.durationMs!,0));
+  const historicalTime=Math.max(0,Math.round(series.reduce((n,s)=>n+s.totalReadingTimeMs,0)-time.reduce((n,e)=>n+e.durationMs!,0)));
   const sourceById = new Map(input.sources.map(s => [s.id,s.hostname]));
   const sourceTime = new Map<string,number>();
   for (const e of time) {
@@ -164,7 +173,7 @@ export function buildAnalytics(input: AnalyticsInput, range: AnalyticsRange = "3
   const startBacklog=backlogAt(weekStart-1);
   return { start, now, days:[...daily.values()], hours, ranking, sessions:selectedSessions, averageSession:sessionDurations.length ? sessionDurations.reduce((n,d)=>n+d,0)/sessionDurations.length : undefined,
     longestSession:sessionDurations.length ? Math.max(...sessionDurations) : undefined, typicalSession:median(sessionDurations), avgChapter, time:selectedTime, chapters:finished.filter(e=>e.timestamp>=start).length,
-    week:{time:timeSince(weekStart),chapters:finished.filter(e=>e.timestamp>=weekStart).length,sessions:sessions.filter(s=>s.start>=weekStart).length,netBacklog:startBacklog===undefined ? undefined : backlog-startBacklog},
+    week:{time:timeSince(weekStart),chapters:finished.filter(e=>e.timestamp>=weekStart).length,sessions:sessions.filter(s=>s.end>weekStart).length,netBacklog:startBacklog===undefined ? undefined : backlog-startBacklog},
     backlog,backlogRows,backlogEstimate,pace,catchupDays:pace[0]!.value>0 ? Math.ceil(backlog/pace[0]!.value) : undefined,
     currentStreak,longestStreak,activeDays:activeDays.filter(d=>d>=start).length,topHour,topDay,historicalTime,genreRows,retention,statusRows,sourceRows,
     releases:uniqueReleases.length,releasesRead:uniqueReleases.filter(c=>c.completedAt).length,releaseDelay:median(delays.map(d=>d.delay)),delays,
