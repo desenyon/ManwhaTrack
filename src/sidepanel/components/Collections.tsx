@@ -4,14 +4,15 @@ import { assignCollections, createCollection, deleteCollection, updateCollection
 import { Dialog } from "../../ui/Menu";
 import { useCollections } from "../../ui/useCollections";
 import { useLibrary } from "../../ui/hooks";
+import { Cover } from "../../ui/Cover";
 
 function ErrorText({ error }: { error?: string }) { return error ? <p role="alert" className="small" style={{ color: "var(--danger)" }}>{error}</p> : null; }
 
-export function CollectionsDialog({ onClose, onOpen }: { onClose: () => void; onOpen?: (id: string) => void }) {
+export function CollectionsDialog({ onClose, onOpen, collection, onManual }: { onClose: () => void; onOpen?: (id: string) => void; collection?: Collection; onManual?: () => void }) {
   const lists = useCollections();
   const lib = useLibrary();
-  const [editing, setEditing] = useState<Collection>();
-  const [name, setName] = useState("");
+  const [editing, setEditing] = useState<Collection | undefined>(collection);
+  const [name, setName] = useState(collection?.name ?? "");
   const [query, setQuery] = useState("");
   const [membership, setMembership] = useState<Record<string, boolean>>({});
   const [confirmDelete, setConfirmDelete] = useState<Collection>();
@@ -21,27 +22,28 @@ export function CollectionsDialog({ onClose, onOpen }: { onClose: () => void; on
   const reset = () => { setEditing(undefined); setConfirmDelete(undefined); setName(""); setQuery(""); setMembership({}); setError(undefined); };
   const apply = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError(undefined);
-    try { await fn(); await lists.reload(); reset(); }
+    try { await fn(); await lists.reload(); if (collection) onClose(); else reset(); }
     catch (err) { setError(err instanceof Error ? err.message : "Could not save your list."); }
     finally { setBusy(false); }
   };
   return (
-    <Dialog className="collection-dialog" title={confirmDelete ? "Delete list?" : editing ? "Edit list" : "Your lists"} onClose={() => { if (!busy) onClose(); }}>
+    <Dialog className="collection-dialog" title={confirmDelete ? "Delete list?" : collection ? "Add series to list" : editing ? "Edit list" : "Your lists"} onClose={() => { if (!busy) onClose(); }}>
       {confirmDelete ? <>
         <p>Delete “{confirmDelete.name}”? All its series and reading history stay in your library.</p>
         <ErrorText error={error} />
         <div className="actions"><button className="btn" disabled={busy} onClick={reset}>Cancel</button><button className="btn danger solid" disabled={busy} onClick={() => void apply(() => deleteCollection(confirmDelete.id))}>Delete list</button></div>
       </> : editing ? <>
-        <label className="stack">List name<input className="input" maxLength={80} value={name} disabled={busy} onChange={e => setName(e.target.value)} /></label>
+        {collection ? <p className="small muted collection-picker-name">{collection.name}</p> : <label className="stack">List name<input className="input" maxLength={80} value={name} disabled={busy} onChange={e => setName(e.target.value)} /></label>}
         <label className="stack" style={{ marginTop: 12 }}>Find series<input className="input" type="search" placeholder="Search your library" value={query} disabled={busy} onChange={e => setQuery(e.target.value)} /></label>
         <p className="small muted">Check series to include in this list. A series can belong to several lists.</p>
         {lib.error && <p role="alert">Your series could not be loaded. <button className="btn sm" onClick={() => void lib.reload()}>Retry</button></p>}
         <div className="collection-choices" style={{ maxHeight: 260, overflowY: "auto" }}>
-          {members.map(s => <label className="collection-choice row" key={s.id} style={{ padding: "7px 0", minWidth: 0 }}><input type="checkbox" disabled={busy} checked={membership[s.id] ?? editing.seriesIds.includes(s.id)} onChange={e => setMembership(m => ({ ...m, [s.id]: e.target.checked }))} /><span style={{ overflowWrap: "anywhere", minWidth: 0 }}>{s.title}</span></label>)}
+          {members.map(s => <label className="collection-choice row" key={s.id} style={{ padding: "7px 0", minWidth: 0 }}><input type="checkbox" aria-label={s.title} disabled={busy} checked={membership[s.id] ?? editing.seriesIds.includes(s.id)} onChange={e => setMembership(m => ({ ...m, [s.id]: e.target.checked }))} /><Cover coverId={s.coverId} title={s.title} /><span style={{ overflowWrap: "anywhere", minWidth: 0 }}>{s.title}</span></label>)}
           {lib.loaded && !members.length && <p className="small muted">{query ? "No matching series." : "No series in your library yet. This list can stay empty."}</p>}
         </div>
+        {collection && onManual && <button className="btn ghost" disabled={busy} onClick={() => { onClose(); onManual(); }}>Track a series manually</button>}
         <ErrorText error={error} />
-        <div className="actions"><button className="btn" disabled={busy} onClick={reset}>Back</button><button className="btn primary" disabled={busy || !name.trim() || !lib.loaded || !!lib.error} onClick={() => void apply(async () => {
+        <div className="actions"><button className="btn" disabled={busy} onClick={collection ? onClose : reset}>{collection ? "Cancel" : "Back"}</button><button className="btn primary" disabled={busy || !name.trim() || !lib.loaded || !!lib.error} onClick={() => void apply(async () => {
           // Rename and membership share a single transaction in the repository.
           await updateCollection(editing.id, name, membership);
         })}>{busy ? "Saving…" : "Save list"}</button></div>
