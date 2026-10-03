@@ -29,6 +29,7 @@ export function localKV(): KV {
 }
 
 const SETTINGS_KEY = "settings";
+let settingsWrites: Promise<unknown> = Promise.resolve();
 
 export function repairSettings(raw: unknown): Settings {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<Settings>;
@@ -37,6 +38,7 @@ export function repairSettings(raw: unknown): Settings {
   if (!["system", "on", "off"].includes(s.artworkMotion)) s.artworkMotion = "system";
   if (!["list", "grid"].includes(s.layout)) s.layout = "list";
   if (!["list", "grid"].includes(s.expandedLayout)) s.expandedLayout = "grid";
+  if (!["compact", "comfortable", "large"].includes(s.expandedCardSize)) s.expandedCardSize = "comfortable";
   if (!["current", "new"].includes(s.continueIn)) s.continueIn = "current";
   if (!["off", "favorites", "all"].includes(s.notifications)) s.notifications = "off";
   s.completionThreshold = clampNum(s.completionThreshold, 0.5, 1, DEFAULT_SETTINGS.completionThreshold);
@@ -45,7 +47,7 @@ export function repairSettings(raw: unknown): Settings {
   s.sortByView = s.sortByView && typeof s.sortByView === "object" ? s.sortByView : {};
   s.shortcuts = { ...DEFAULT_SHORTCUTS, ...(s.shortcuts && typeof s.shortcuts === "object" ? s.shortcuts : {}) };
   s.siteRules = Array.isArray(s.siteRules) ? s.siteRules.filter(isSiteRule) : [];
-  for (const k of ["showTrackingToast", "updateChecks", "badge", "trackIncognito", "debug"] as const) s[k] = s[k] === true || (s[k] !== false && DEFAULT_SETTINGS[k]);
+  for (const k of ["showTrackingToast", "updateChecks", "badge", "trackIncognito", "debug", "ambientBackground", "showReadingTimer", "showFeaturedContinue", "showScrollbars"] as const) s[k] = s[k] === true || (s[k] !== false && DEFAULT_SETTINGS[k]);
   return s;
 }
 
@@ -63,9 +65,14 @@ export async function getSettings(): Promise<Settings> {
   return repairSettings(res[SETTINGS_KEY]);
 }
 
-export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
-  const next = repairSettings({ ...(await getSettings()), ...patch });
-  await localKV().set({ [SETTINGS_KEY]: next });
+export function saveSettings(patch: Partial<Settings>): Promise<Settings> {
+  const operation = async () => {
+    const next = repairSettings({ ...(await getSettings()), ...patch });
+    await localKV().set({ [SETTINGS_KEY]: next });
+    return next;
+  };
+  const next = settingsWrites.then(operation, operation);
+  settingsWrites = next;
   return next;
 }
 
