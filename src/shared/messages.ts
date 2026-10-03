@@ -190,6 +190,8 @@ export function sanitizeObservation(raw: unknown): PageObservation | null {
     if (title && seriesUrl && canonical) {
       obs.series = {
         title,
+        format: s.format === "novel" || s.format === "manhwa" ? s.format : undefined,
+        genres: (Array.isArray(s.genres) ? s.genres : []).map(x => cleanText(x, 40)).filter((x): x is string => !!x).slice(0, 20),
         alternateTitles: (Array.isArray(s.alternateTitles) ? s.alternateTitles : []).map((x) => cleanText(x, 150)).filter((x): x is string => !!x).slice(0, 20),
         seriesUrl,
         canonicalSeriesUrl: canonical,
