@@ -39,6 +39,13 @@ ${n < latest ? `<div class="wp-manga-nav"><div class="nav-next"><a id="next" cla
 <div style="height:600px">Comments</div></body></html>`;
 }
 
+function novelPage(base: string, slug: string, chapter?: number, latest = 33): string {
+  const title = titleOf(slug);
+  const links = Array.from({length:latest}, (_,i)=>`<a href="${base}/novel/${slug}/chapter-${i+1}/">Chapter ${i+1}</a>`).join(" ");
+  const prose = Array.from({length:55}, (_,i)=>`<p>${i+1}. ${"The traveller followed the river into a quiet forest, searching for the forgotten city beyond the mountains. ".repeat(4)}</p>`).join("");
+  return `<!doctype html><html><head><title>${title}${chapter ? ` Chapter ${chapter}` : ""}</title><meta property="og:image" content="${base}/covers/${slug}.png"><style>body{margin:0 auto;max-width:720px;padding:24px;font:18px/1.8 Georgia}a{display:inline-block;margin:8px}p{margin:24px 0}</style></head><body><ol class="breadcrumb"><li><a href="${base}/">Home</a></li><li><a href="${base}/novel/${slug}/">${title}</a></li>${chapter ? `<li>Chapter ${chapter}</li>` : ""}</ol><h1>${title}${chapter ? ` — Chapter ${chapter}` : ""}</h1>${chapter ? `<article class="chapter-content">${prose}</article><a id="next" rel="next" href="${base}/novel/${slug}/chapter-${chapter+1}/">Next Chapter</a>` : `<img src="${base}/covers/${slug}.png" width="200"><dl><dt>Genre</dt><dd>Fantasy, Adventure</dd><dt>Author</dt><dd>Test Author</dd></dl><section>${links}</section>`}</body></html>`;
+}
+
 export interface FixtureServer {
   base: string;
   server: Server;
@@ -63,6 +70,8 @@ export async function startFixtureServer(opts: { host?: string } = {}): Promise<
       res.writeHead(status, { "content-type": type });
       res.end(body);
     };
+    const novel = /^\/novel\/([a-z0-9-]+)\/(?:chapter-(\d+)\/)?$/.exec(url);
+    if (novel) return send(200, "text/html", novelPage(pageBase, novel[1]!, novel[2] ? Number(novel[2]) : undefined));
     const sm = /^\/manga\/([a-z0-9-]+)\/(?:\?latest=(\d+))?$/.exec(url);
     if (sm) return send(200, "text/html", seriesPage(pageBase, sm[1], sm[2] ? Number(sm[2]) : latest.get(sm[1]!) ?? 33));
     const m = /^\/manga\/([a-z0-9-]+)\/chapter-(\d+)\/$/.exec(url);
