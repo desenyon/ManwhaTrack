@@ -34,6 +34,7 @@ export function visiblePageProgress(pages: Element[], viewportW: number, viewpor
 
 export const mangaPlusAdapter: SiteAdapter = {
   id: "mangaplus",
+  format: "manhwa",
   hosts: ["mangaplus.shueisha.co.jp"],
   // Pages are empty until JavaScript runs, so fetched HTML can't be checked for updates.
   updates: "none",
