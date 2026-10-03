@@ -161,7 +161,7 @@ it("legacy backups explicitly migrate with revision defaults", async () => {
   file.schemaVersion = 1;
   for (const c of file.chapters) delete c.progressRevision;
   const parsed = parseBackup(JSON.stringify(file));
-  expect(parsed).toMatchObject({ ok: true, invalid: 0, file: { exportVersion: 4, schemaVersion: 4 } });
+  expect(parsed).toMatchObject({ ok: true, invalid: 0, file: { exportVersion: 5, schemaVersion: 6 } });
   if (parsed.ok) expect(parsed.file.chapters.every(c => c.progressRevision === 0)).toBe(true);
 });
 
