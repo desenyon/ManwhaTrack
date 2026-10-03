@@ -16,6 +16,8 @@ const KNOWN_READER_SELECTORS = [
   ".read-container",
   ".reader-main",
   "[data-reader]",
+  ".js-episode-article",
+  ".viewer__body",
 ];
 
 const NOISE_ANCESTOR = /(?:^|[\s_-])(?:header|footer|nav|sidebar|comment|comments|related|recommend|widget|ads?|banner|popular|menu)(?:$|[\s_-])/i;
@@ -56,8 +58,11 @@ export interface ReaderGuess {
 
 /** Require substantial prose in a focused reader, never a whole page or comment thread. */
 export function findTextReader(doc: Document): HTMLElement | null {
-  for (const el of qsa<HTMLElement>(doc, ".chapter-content, .chapter-inner, .reading-content, #chapter-content, #chapterContent, #chr-content, .cha-words, .text-content, [data-reader], article", 60)) {
+  for (const el of qsa<HTMLElement>(doc, ".chapter-content, .chapter-inner, .reading-content, #chapter-content, #chapterContent, #chr-content, .cha-words, .text-content, .js-episode-article, .viewer__body, [data-reader], article", 60)) {
     if (inNoise(el) || NOISE_ANCESTOR.test(`${el.id} ${el.className}`)) continue;
+    // A page-wide article can include translation notes around a dedicated comic
+    // reader. Those notes must not replace the actual chapter content.
+    if (el.tagName === "ARTICLE" && qsa(el, KNOWN_READER_SELECTORS.join(","), 60).some(reader => reader !== el && qsa(reader, "img, canvas", 3).length >= 2)) continue;
     const paragraphs = qsa(el, "p", 1500).filter(p => !inNoise(p) && (p.textContent?.trim().length ?? 0) >= 40);
     const breaks = qsa(el, "br", 1500).length;
     const prose = paragraphs.length >= 5 && paragraphs.reduce((n,p) => n + (p.textContent?.length ?? 0), 0) >= 1200;
