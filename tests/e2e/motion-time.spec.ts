@@ -26,6 +26,8 @@ test("footer fits the viewport, visibly moves, and saves its motion preference",
     await expect(panel.locator(".srow")).toHaveCount(1);
     await panel.emulateMedia({ reducedMotion: "no-preference", colorScheme: "dark" });
     const landscape = panel.locator(".landscape-scene");
+    await expect(panel.getByText("Your library stays on this device.", { exact: true })).toHaveCount(0);
+    expect(await panel.locator(".colophon").evaluate(el => getComputedStyle(el).borderTopWidth)).toBe("0px");
     await expect(panel.locator(".colophon")).toHaveAttribute("data-visible", "true");
     const tall = await landscape.evaluate(el => el.getBoundingClientRect().height);
     await panel.setViewportSize({ width: 380, height: 640 });
@@ -60,6 +62,9 @@ test("footer fits the viewport, visibly moves, and saves its motion preference",
       await panel.setViewportSize({ width, height: 700 });
       expect(await panel.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await expect(panel.getByRole("button", { name: "Pause artwork animation" })).toBeVisible();
+      const caption = await panel.locator(".colophon-caption").boundingBox();
+      const text = await panel.locator(".colophon-caption > div").boundingBox();
+      expect(Math.abs((text!.x+text!.width/2)-(caption!.x+caption!.width/2))).toBeLessThan(2);
     }
     await panel.setViewportSize({ width: 380, height: 900 });
     await panel.getByLabel("Lists and library views").selectOption("all");
@@ -118,5 +123,20 @@ test("active timer pauses, totals match chapter time, and survive closing the br
     await expect(reopened.locator(".tile")).toHaveCount(1);
     await reopened.getByRole("complementary").getByRole("button", { name: "Time tracking", exact: true }).click();
     await expect(reopened.getByTestId("total-reading-time")).toHaveText(total!);
+    // Analytics reflects the same persisted measurements, and refreshes while
+    // reading continues rather than waiting for the reader to stop.
+    await reopened.getByRole("complementary").getByRole("button", { name: "Analytics", exact: true }).click();
+    const active = reopened.locator(".analytics-overview dd").first();
+    await expect(active).toHaveText(/^(<1|\d+)s$/);
+    const before = await active.textContent();
+    const nextReader = await ctx.newPage();await nextReader.goto(`${fx.base}/manga/solo-leveling/chapter-5/`);await nextReader.bringToFront();
+    await nextReader.evaluate(() => scrollTo(0,300));
+    await expect.poll(() => active.textContent(), { timeout: 12_000 }).not.toBe(before);
+    await nextReader.evaluate(() => scrollTo(0,document.body.scrollHeight));
+    await expect(reopened.locator(".analytics-overview dd").nth(1)).toHaveText("1");
+    await expect(reopened.locator(".analytics-overview dd").nth(2)).toHaveText("1");
+    await nextReader.close();
+    await reopened.reload();await expect(reopened.locator(".analytics-overview dd").nth(1)).toHaveText("1");
+    await shot(reopened,"analytics-live-reading");
   } finally { await ctx.close(); fx.server.close(); rmSync(dir, { recursive: true, force: true }); }
 });
