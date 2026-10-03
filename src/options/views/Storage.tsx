@@ -43,7 +43,7 @@ export function StorageSection() {
       <div className="card" style={{ marginBottom: 16 }}>
         <strong>Your library is stored on this device.</strong>
         <p style={{ margin: "6px 0 0" }} className="muted">
-          ManwhaTrack has no account and no server. It contacts only the reading sites you visit: to read the page you opened, to download a series cover, and — if enabled — to check tracked series pages for new chapters. There is no analytics or error reporting.
+          ManwhaTrack has no account and no server. It contacts only the reading sites you visit: to read the page you opened, to download a series cover, and — if enabled — to check tracked series pages for new chapters. Reading analytics stay on this device. There is no usage telemetry or external error reporting.
         </p>
       </div>
 
@@ -83,7 +83,7 @@ export function StorageSection() {
       )}
       {confirm === "history" && (
         <Dialog title="Clear all reading history?" onClose={() => setConfirm(null)}>
-          <p className="muted" style={{ marginTop: 0 }}>Only the event log is cleared. Library, chapter progress and Continue positions are kept.</p>
+          <p className="muted" style={{ marginTop: 0 }}>The event log and dated analytics are cleared. Library, chapter progress and Continue positions are kept.</p>
           <div className="actions">
             <button className="btn" onClick={() => setConfirm(null)}>Cancel</button>
             <button className="btn danger solid" onClick={async () => { await clearAllHistory(); publish({ type: "library-changed" }); setConfirm(null); toast.show("Reading history cleared"); }}>Clear history</button>
