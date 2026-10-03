@@ -6,7 +6,7 @@ export type SeriesStatus = "reading" | "completed" | "planning" | "on-hold" | "d
 export const SERIES_STATUSES: readonly SeriesStatus[] = ["reading", "planning", "on-hold", "completed", "dropped"];
 
 /** Fields a user can explicitly own. Automatic detection never overwrites these once set. */
-export type SeriesUserField = "title" | "alternateTitles" | "cover" | "status";
+export type SeriesUserField = "title" | "alternateTitles" | "cover" | "status" | "format" | "genres";
 export type ChapterUserField = "label" | "number";
 
 export interface ChapterIdentity {
@@ -47,6 +47,9 @@ export interface Series {
   title: string;
   /** Last title produced by detection. `title` equals this unless the user owns "title". */
   detectedTitle?: string;
+  /** Legacy libraries default to manhwa; explicit user choice wins over detection. */
+  format?: "manhwa" | "novel";
+  genres?: string[];
   normalizedTitle: string;
   alternateTitles: string[];
   /** Normalized title + alternate titles, indexed for duplicate and source matching. */
@@ -175,9 +178,11 @@ export interface Chapter {
    * Continue target but not counted as "new" (sites sometimes link past their latest chapter).
    */
   inferred?: boolean;
+  /** First observed after an established catalog baseline, not a publisher release date. */
+  observedReleaseAt?: number;
 }
 
-export type ReadingEventType = "opened" | "progress" | "completed" | "manual-read" | "manual-unread";
+export type ReadingEventType = "opened" | "progress" | "completed" | "manual-read" | "manual-unread" | "time" | "backlog";
 
 export interface ReadingEvent {
   id: string;
@@ -186,6 +191,9 @@ export interface ReadingEvent {
   type: ReadingEventType;
   timestamp: number;
   progress?: number;
+  durationMs?: number;
+  startedAt?: number;
+  backlogCount?: number;
   /** Denormalized so history stays readable if the chapter record is later removed. */
   chapterLabel?: string;
   hostname?: string;
