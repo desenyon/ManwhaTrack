@@ -1,0 +1,30 @@
+{
+  "name": "ManwhaTrack",
+  "language": "English",
+  "summary": "Automatically remembers the manhwa and web novels you read and where you stopped. Local-only: no account, no server.",
+  "description": "ManwhaTrack remembers the manhwa and web novels you read, the chapter you reached, and your position within it. Open a supported reading page and it appears in your local library automatically.\n\nREAD AND RESUME\nKeep your library beside the reader in Chrome's side panel, or open the expanded library. Resume opens your saved reading position in a separate window. Opening a chapter and finishing it are tracked separately, with manual corrections available.\n\nORGANIZE YOUR LIBRARY\nCreate personal lists and tags. Search, sort, filter, favorite and pin series. Edit titles, format, progress, notes and preferred sources. Cached covers and library records remain available offline.\n\nFOLLOW YOUR READING\nCheck tracked sources for new chapters, with conservative intervals and error backoff. Track active reading time and inspect local activity, reading patterns and backlog estimates. Older activity that was never recorded is not invented.\n\nLOCAL BY DESIGN\nNo account, backend, usage telemetry or external analytics. Your library, reading history, notes and analytics stay in local browser storage. Export a backup whenever you need one. Requests for covers and chapter updates go directly to your reading sources.\n\nDetection depends on each site's layout and available reader content. Unsupported or changed sites may need manual corrections or local site rules. Incognito tracking is off by default.\n\nWebsite access is needed to recognize reading pages automatically across sites. Ordinary browsing pages are not saved to the library.\n\nPrivacy: https://github.com/desenyon/ManwhaTrack/blob/main/PRIVACY.md\nSupport: https://github.com/desenyon/ManwhaTrack/issues",
+  "homepageUrl": "https://github.com/desenyon/ManwhaTrack",
+  "supportUrl": "https://github.com/desenyon/ManwhaTrack/issues",
+  "privacyPolicyUrl": "https://github.com/desenyon/ManwhaTrack/blob/main/PRIVACY.md",
+  "singlePurpose": "Automatically remember and organize the user's manhwa and web novel reading, including chapter progress, saved reading positions, local reading history and updates from tracked sources.",
+  "remoteCode": false,
+  "remoteCodeExplanation": "All executable code is bundled in the extension. Reading pages and covers are fetched as data and are not executed as remote code. No remotely hosted JavaScript, WebAssembly, fonts, AI services or analytics SDKs are used.",
+  "dataCategories": ["Web history", "User activity", "Website content"],
+  "dataUseExplanation": "Reading-page URLs, titles, chapter links, covers, scroll progress, active reading time, and user-entered notes, tags and ratings are processed and stored locally to provide reading tracking. Ordinary browsing pages are not recorded as a history log. Library and analytics data are not uploaded to the developer or third parties. Direct source requests load covers and check tracked chapters; source providers receive normal URL/IP/Referer information. Optional exported backups and support reports are shared only by the user's own action.",
+  "dataUseCertifications": {
+    "notSoldOrTransferredOutsideApprovedUses": true,
+    "notUsedOrTransferredForUnrelatedPurposes": true,
+    "notUsedForCreditworthinessOrLending": true
+  },
+  "permissionJustifications": {
+    "storage": "Stores preferences, local site rules, view configuration and lightweight extension state in chrome.storage.local. The library, covers and reading events are stored in local IndexedDB. No chrome.storage.sync is used.",
+    "unlimitedStorage": "Keeps the user's growing offline library, locally cached cover images and reading history from being constrained by the default extension storage quota. Users can inspect storage usage, clear caches and export or delete their data.",
+    "sidePanel": "Displays the user's reading library beside their current reading page, with progress, lists and Resume actions. The toolbar action opens this panel.",
+    "alarms": "Schedules conservative checks of already tracked reading sources and local maintenance while Chrome is active. Update checks can be disabled and failed sources back off.",
+    "contextMenus": "Provides implemented page actions for tracking a series, opening the library or source, and marking the current chapter read or unread.",
+    "offscreen": "Uses a local offscreen document's DOM parser to inspect fetched tracked-series HTML for chapter updates, because the Manifest V3 service worker has no DOMParser.",
+    "declarativeNetRequestWithHostAccess": "Temporarily adds the source site's Referer header to extension-initiated cover or source requests when required by hotlink protection. Session rules are scoped to the requested host and this extension as initiator, then removed. The extension does not modify unrelated browser traffic.",
+    "notifications": "Optional permission requested only when the user enables chapter-update notifications in settings. Notifications can be limited to favorites or turned off; no permission is requested by default.",
+    "host_permissions": "HTTP and HTTPS access allows automatic detection on reading sites the user chooses, without requiring a separate manual site grant for each new source. The content script checks whether a page is a reading page before persisting anything. Access also allows direct cover downloads, source-image CDN requests and checks of tracked chapter lists. Source requests omit cookies; library records and scraped content are never uploaded. Users can ignore individual hosts, disable update checks, or restrict extension site access through Chrome. No non-reading browsing-history log is kept."
+  }
+}
