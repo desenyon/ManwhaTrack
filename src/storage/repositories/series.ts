@@ -1,3 +1,4 @@
+import { recordBacklogTx } from "./analytics";
 import { remapCollectionSeriesTx } from "./collections";
 import type { Series, SeriesStatus, SeriesUserField } from "../../shared/types/models";
 import { read, write, type Tx } from "../db";
@@ -18,7 +19,7 @@ export async function putSeriesTx(t: Tx, s: Series): Promise<void> {
 }
 
 /** Recomputes derived reading state for one series from its chapters and sources. */
-export async function refreshSeriesTx(t: Tx, seriesId: string, mutate?: (s: Series) => void): Promise<Series | undefined> {
+export async function refreshSeriesTx(t: Tx, seriesId: string, mutate?: (s: Series) => void, observedAt = Date.now()): Promise<Series | undefined> {
   const s = await getSeriesTx(t, seriesId);
   if (!s) return undefined;
   mutate?.(s);
@@ -37,6 +38,7 @@ export async function refreshSeriesTx(t: Tx, seriesId: string, mutate?: (s: Seri
   s.totalReadingTimeMs = chapters.reduce((a, c) => a + (c.readingTimeMs || 0), 0);
   s.updatedAt = Date.now();
   await putSeriesTx(t, s);
+  if (t.raw.objectStoreNames.contains("events")) await recordBacklogTx(t, s, observedAt);
   return s;
 }
 
@@ -63,6 +65,8 @@ export interface SeriesEdit {
   pinned?: boolean;
   personalRating?: number | null;
   tags?: string[];
+  format?: Series["format"];
+  genres?: string[];
   notes?: string;
   preferredSourceId?: string;
   hidden?: boolean;
@@ -72,6 +76,8 @@ const USER_OWNED: Partial<Record<keyof SeriesEdit, SeriesUserField>> = {
   title: "title",
   alternateTitles: "alternateTitles",
   status: "status",
+  format: "format",
+  genres: "genres",
 };
 
 export function cleanTags(tags: string[]): string[] {
@@ -89,7 +95,7 @@ export function cleanTags(tags: string[]): string[] {
 
 /** Applies explicit user edits. Title/aliases/status become user-owned and survive re-detection. */
 export async function editSeries(id: string, edit: SeriesEdit): Promise<Series | undefined> {
-  return write(["series", "chapters", "sources"], async (t) => {
+  return write(["series", "chapters", "sources", "events"], async (t) => {
     const updated = await refreshSeriesTx(t, id, (s) => applyEdit(s, edit));
     return updated;
   });
@@ -108,6 +114,8 @@ export function applyEdit(s: Series, edit: SeriesEdit): void {
     s.personalRating = edit.personalRating === null ? undefined : Math.max(0, Math.min(10, Math.round(edit.personalRating * 2) / 2));
   }
   if (edit.tags !== undefined) s.tags = cleanTags(edit.tags);
+  if (edit.format === "novel" || edit.format === "manhwa") s.format = edit.format;
+  if (edit.genres !== undefined) s.genres = cleanTags(edit.genres);
   if (edit.notes !== undefined) s.notes = edit.notes.slice(0, 20000) || undefined;
   if (edit.preferredSourceId !== undefined) s.preferredSourceId = edit.preferredSourceId;
   if (edit.hidden !== undefined) s.hidden = edit.hidden;
@@ -118,7 +126,7 @@ export function applyEdit(s: Series, edit: SeriesEdit): void {
 
 /** Drops a user override so detection may manage the field again. */
 export async function resetUserField(id: string, field: SeriesUserField): Promise<Series | undefined> {
-  return write(["series", "chapters", "sources"], (t) =>
+  return write(["series", "chapters", "sources", "events"], (t) =>
     refreshSeriesTx(t, id, (s) => {
       s.userFields = s.userFields.filter((f) => f !== field);
       if (field === "title" && s.detectedTitle) s.title = s.detectedTitle;
@@ -128,7 +136,7 @@ export async function resetUserField(id: string, field: SeriesUserField): Promis
 }
 
 export async function batchEdit(ids: string[], edit: (s: Series) => SeriesEdit): Promise<void> {
-  await write(["series", "chapters", "sources"], async (t) => {
+  await write(["series", "chapters", "sources", "events"], async (t) => {
     for (const id of ids) {
       const s = await getSeriesTx(t, id);
       if (s) await refreshSeriesTx(t, id, (x) => applyEdit(x, edit(s)));
