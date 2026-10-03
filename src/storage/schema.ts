@@ -42,6 +42,8 @@ export function createSeries(init: { title: string; status?: SeriesStatus; now?:
     favorite: false,
     pinned: false,
     tags: [],
+    format: "manhwa",
+    genres: [],
     sourceIds: [],
     discoveredAt: now,
     updatedAt: now,
@@ -122,6 +124,8 @@ export function repairSeries(raw: Partial<Series> & Record<string, unknown>): Se
     pinned: bool(raw.pinned),
     personalRating: rating !== undefined ? Math.max(0, Math.min(10, rating)) : undefined,
     tags: strArr(raw.tags),
+    format: raw.format === "novel" ? "novel" : "manhwa",
+    genres: strArr(raw.genres),
     notes: str(raw.notes),
     sourceIds: strArr(raw.sourceIds),
     discoveredAt: num(raw.discoveredAt) ?? now,
@@ -194,7 +198,9 @@ export function repairEvent(raw: Partial<ReadingEvent> & Record<string, unknown>
   const id = str(raw.id);
   const seriesId = str(raw.seriesId);
   const timestamp = num(raw.timestamp);
-  const types = ["opened", "progress", "completed", "manual-read", "manual-unread"];
+  const types = ["opened", "progress", "completed", "manual-read", "manual-unread", "time", "backlog"];
   if (!id || !seriesId || timestamp === undefined || !types.includes(raw.type as string)) return null;
+  if (raw.type === "time" && (!(num(raw.durationMs)! > 0) || raw.durationMs! > 60_000 || num(raw.startedAt) === undefined || raw.startedAt! > timestamp || raw.durationMs! > timestamp - raw.startedAt!)) return null;
+  if (raw.type === "backlog" && (num(raw.backlogCount) === undefined || raw.backlogCount! < 0 || !Number.isInteger(raw.backlogCount))) return null;
   return { ...(raw as ReadingEvent), id, seriesId, timestamp };
 }
