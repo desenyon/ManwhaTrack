@@ -41,6 +41,15 @@ describe("dated local activity",()=>{
   });
 });
 describe("novel identity and corrections",()=>{
+  it("corrects a detected format on revisit without duplicating the series or losing manual choices",async()=>{
+    const o=seriesObs({title:"River",url:SL});o.series!.format="novel";
+    const first=await trackSeriesPage(o);
+    o.series!.format="manhwa";const second=await trackSeriesPage(o);
+    expect(second!.seriesId).toBe(first!.seriesId);expect((await getSeries(first!.seriesId))?.format).toBe("manhwa");
+    o.series!.format=undefined;await trackSeriesPage(o);expect((await getSeries(first!.seriesId))?.format).toBe("manhwa");
+    await editSeries(first!.seriesId,{format:"novel"});o.series!.format="manhwa";await trackSeriesPage(o);
+    expect((await getSeries(first!.seriesId))?.format).toBe("novel");
+  });
   it("keeps same-named adaptations separate and preserves explicit format and genres",async()=>{
     const comic=seriesObs({title:"A Story",url:SL,alts:["Another name"]});comic.series!.format="manhwa";
     const a=await trackSeriesPage(comic);
