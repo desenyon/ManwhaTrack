@@ -8,6 +8,7 @@ import { sendToWorker } from "../../shared/messages";
 import { relativeTime } from "../../shared/utils/format";
 import { subscribe } from "../../shared/bus";
 import { useToast } from "../../ui/toasts";
+import { Toggle } from "./General";
 
 const ORDER: SourceHealth[] = ["failing", "stale", "unknown", "healthy"];
 const LABEL: Record<SourceHealth, string> = { failing: "Not responding", stale: "Stale", unknown: "Not checked yet", healthy: "Healthy" };
@@ -65,7 +66,7 @@ export function SourcesSection() {
               </td>
               <td className="muted" data-label="Last check">{relativeTime(s.lastCheckedAt)}</td>
               <td data-label="Updates">
-                <input type="checkbox" aria-label={`Check ${s.hostname} for updates`} checked={!s.disabled} onChange={async (e) => { await updateSource(s.id, { disabled: !e.target.checked }); void load(); }} />
+                <Toggle label={`Check ${s.hostname} for updates`} checked={!s.disabled} onChange={v => { void updateSource(s.id, { disabled: !v }).then(load).catch(() => toast.show("Could not save this source preference.", { error: true })); }} />
               </td>
             </tr>
           ))}
