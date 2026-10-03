@@ -41,7 +41,7 @@ Reading across a handful of sites means remembering which chapter you reached, w
 <td width="50%" valign="top">
 
 ### Library that stays out of the way
-A dense side panel beside whatever you're reading. Continue and New stay visible; the list chooser holds your own collections and other library views. Open the full library with the expand icon beside the header menu. Both views share the same local data, filters, sorting and search. The sidebar starts as a compact list; the expanded library starts with larger cover cards. Each remembers its own layout.
+A dense side panel beside whatever you're reading. Continue and New stay visible; the list chooser holds your own collections and other library views. Open the full library with the expand icon beside the header menu. Both views share the same local data, filters, sorting and search. The sidebar starts as a compact list; the expanded library starts with larger cover cards. Each remembers its own layout. Add series directly from a personal list's page. Settings control card size, timer visibility, quiet outer scenery and scrollbar visuals.
 
 </td>
 <td width="50%" valign="top">
@@ -228,7 +228,7 @@ npm run check
 
 The end-to-end suite loads the built extension in Chromium and checks the core promise: discover a series, read Chapter 31, click *Next*, restart the browser, press *Continue*, land on Chapter 32 — plus saved viewport Resume, persistent lists/tags, backup, expanded-library interactions, update checks, offline use and survival of service-worker termination.
 
-The latest [library refinement verification](docs/implementation/library-refinement-verification.md) covers Nano Machine chapter repair, separate-window Resume, expanded cards and details, layout persistence and active-time checks. Earlier [motion and time verification](docs/implementation/motion-time-verification.md) records the animation and timer acceptance checks.
+The latest [workspace flow verification](docs/implementation/workspace-flow-verification.md) covers direct list membership, preferences after restart, scrolling, expanded navigation and outer scenery. [Library refinement verification](docs/implementation/library-refinement-verification.md) covers Nano Machine chapter repair, separate-window Resume, expanded cards and details, layout persistence and active-time checks. Earlier [motion and time verification](docs/implementation/motion-time-verification.md) records the animation and timer acceptance checks.
 
 <details>
 <summary><b>Project layout</b></summary>
