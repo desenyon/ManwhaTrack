@@ -340,9 +340,8 @@ h1, h2, .brand { font-family: Georgia, "Times New Roman", serif; font-weight: 40
 .opts h1 { font-size: 32px; }
 .opts h2 { font-size: 22px; }
 .opts nav { background: var(--bg); }
-.colophon { margin: 28px 16px 0; border-top: 1px solid var(--border); overflow: hidden; padding-top: 16px; }
+.colophon { margin: 28px 16px 0; overflow: hidden; }
 .colophon strong { font: 19px Georgia, serif; color: var(--accent); position: relative; z-index: 1; }
-.colophon p { font-size: 10px; color: var(--text-2); margin: 5px 0; position: relative; z-index: 1; }
 .landscape-scene { position: relative; overflow: hidden; margin-top: 12px; border-radius: 3px; }
 .colophon img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: bottom; mix-blend-mode: multiply; pointer-events: none; }
 :root[data-theme="dark"] .colophon img { mix-blend-mode: normal; opacity: .78; }
@@ -488,7 +487,9 @@ h1, h2 { font-family: var(--display); }
 .library-content, .colophon { flex-shrink: 0; }
 .library-home > .colophon { margin-top: auto; }
 .colophon .landscape-scene { height: var(--landscape-height, 140px); background: var(--surface-2); }
-.colophon-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.colophon-caption { display: grid; grid-template-columns: minmax(24px, 1fr) auto minmax(24px, 1fr); align-items: center; gap: 8px; min-height: 40px; }
+.colophon-caption > div { grid-column: 2; min-width: 0; text-align: center; }
+.colophon-caption .motion-control { grid-column: 3; justify-self: end; }
 .colophon strong { font: 15px Georgia, serif; }
 .motion-control { flex: none; gap: 5px; font-size: 10px; }
 .landscape-image { --art-animation: landscape-drift 12s linear infinite alternate; animation: var(--art-animation); }
@@ -741,7 +742,7 @@ h1, h2 { font-family: var(--display); }
 .featured-continue .meta-card { background: transparent; border: 0; }
 .cover { position: relative; }
 .format-badge { position: absolute; bottom: 6px; left: 6px; padding: 3px 6px; border-radius: 3px; background: #211b2be8; color: #f5eedf; font: 10px/1.2 var(--font); pointer-events: none; }
-.srow .format-badge { left: 2px; right: 2px; bottom: 2px; padding: 2px 0; text-align: center; font-size: 8px; }
+:is(.srow, .now, .continue-card) .format-badge { left: 2px; right: 2px; bottom: 2px; padding: 2px 0; text-align: center; font-size: 8px; }
 .folio-heading { align-items: center; }
 .folio-heading > div:first-child { min-width: 0; }
 .folio-heading h1 { margin: 0; }
@@ -789,6 +790,7 @@ h1, h2 { font-family: var(--display); }
 .analytics-heading h1 { font: 32px/1.2 Georgia, serif; margin: 16px 0 8px; overflow-wrap: anywhere; }
 .analytics-heading p { margin: 0; }
 .analytics-heading > div:first-child { min-width: 0; }
+.analytics-period { display: grid; gap: 8px; justify-items: end; }
 .analytics-heading .btn { padding-left: 0; }
 .range-control { display: flex; flex-wrap: wrap; gap: 4px; }
 .range-control .btn { padding: 6px 9px; }
@@ -810,6 +812,7 @@ h1, h2 { font-family: var(--display); }
 .analytics-section > summary { font: 19px/1.4 Georgia, serif; cursor: pointer; }
 .analytics-section[open] > summary { margin-bottom: 20px; }
 .activity-calendar { display: grid; grid-template-columns: 22px minmax(0,1fr); gap: 8px; margin: 18px 0 12px; }
+.activity-months { grid-column: 2; display: grid; grid-template-columns: repeat(var(--heat-weeks), minmax(0, 1fr)); gap: 4px; font-size: 10px; color: var(--text-3); }
 .activity-weekdays { display: grid; grid-template-rows: repeat(7,1fr); align-items: center; font-size: 10px; color: var(--text-3); }
 .activity-heatmap { display: grid; grid-template-rows: repeat(7, 1fr); grid-auto-flow: column; grid-template-columns: repeat(var(--heat-weeks, 12), minmax(0, 1fr)); gap: 4px; margin: 0; }
 .activity-day { aspect-ratio: 1; width: 100%; border: 0; border-radius: 2px; cursor: pointer; }
@@ -867,6 +870,7 @@ h1, h2 { font-family: var(--display); }
   .analytics-metrics dd { font-size: 32px; }
   .analytics-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 40px; }
   .activity-heatmap { gap: 6px; }
+  .activity-months { gap: 6px; }
   .analytics-facts { gap: 18px; }
 }
 @media (max-width: 360px) {
@@ -874,6 +878,7 @@ h1, h2 { font-family: var(--display); }
   .folio-heading h1 { font-size: 27px; }
   .compact-timer > .icon { display: none; }
   .analytics-heading h1 { font-size: 28px; }
+  .analytics-period { justify-items: start; }
   .time-of-day { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
   .analytics-line { gap: 10px; }
   .analytics-ranking { gap: 12px; }
