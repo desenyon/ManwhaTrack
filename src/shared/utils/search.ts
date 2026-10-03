@@ -25,7 +25,7 @@ export function buildSearchEntry(s: Series, sources: SeriesSource[] = []): Searc
     fields: [
       field([s.title, ...s.alternateTitles], 1),
       field(sources.map((x) => x.sourceTitle), 0.9),
-      field(s.tags, 0.8),
+      field([...s.tags, ...(s.genres ?? []), s.format === "novel" ? "novel" : "manhwa"], 0.8),
       field(sources.map((x) => x.hostname.replace(/\./g, " ")), 0.6),
       field([s.notes], 0.4),
     ],
