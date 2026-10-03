@@ -32,6 +32,7 @@ function sectionFromHash(): { id: SectionId; params: URLSearchParams } {
 export function App() {
   const [settings, update] = useSettings();
   useTheme(settings.theme);
+  useEffect(() => { document.documentElement.dataset.scrollbars = settings.showScrollbars ? "visible" : "hidden"; }, [settings.showScrollbars]);
   const [route, setRoute] = useState(sectionFromHash);
   useLayoutEffect(() => { window.scrollTo({ top: 0 }); }, [route.id]);
 
