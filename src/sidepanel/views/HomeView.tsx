@@ -2,7 +2,7 @@ import { useState, type MouseEvent, type RefObject } from "react";
 import type { Series } from "../../shared/types/models";
 import type { Settings, SortKey } from "../../shared/types/settings";
 import type { TabState } from "../../shared/messages";
-import { inView, MORE_VIEWS, PRIMARY_VIEWS, type Filters, type ViewId } from "../../shared/utils/library";
+import { inView, MORE_VIEWS, NO_FILTERS, PRIMARY_VIEWS, type Filters, type ViewId } from "../../shared/utils/library";
 import { lastReadText } from "../../shared/utils/format";
 import { shortChapterLabel } from "../../detection/normalization/chapter";
 import { keepSeparate, mergeSeries } from "../../storage/repositories/sources";
@@ -45,6 +45,7 @@ export interface HomeProps {
   onReloadCollections: () => void;
   onOpenCollection: (id: string) => void;
   onManageLists: () => void;
+  onAddToList: () => void;
   onOpenTime: () => void;
   focusedId?: string;
   setFocusedId: (id: string | undefined) => void;
@@ -74,7 +75,7 @@ export function HomeView(p: HomeProps) {
         .filter((s) => inView(s, "continue") && (!p.collection || p.collection.seriesIds.includes(s.id)))
         .sort((a, b) => (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0))[0]
     : undefined;
-  const heroHidden = !hero || (p.expanded && p.view !== "continue" && !p.collection) || (tabSeries?.id === hero.id && p.tab.state?.observation.kind === "chapter");
+  const heroHidden = !settings.showFeaturedContinue || !hero || !!p.collection || (p.expanded && p.view !== "continue") || (tabSeries?.id === hero.id && p.tab.state?.observation.kind === "chapter");
 
   const onContinue = (s: Series, e: MouseEvent) => {
     const modifier = e.metaKey || e.ctrlKey || e.button === 1;
@@ -119,8 +120,8 @@ export function HomeView(p: HomeProps) {
 
   return (
     <><div className="library-home"><div className="library-content">
-      <div className="folio-heading"><span className="section-title">{p.collection ? "Your list" : "A private reading collection"}</span><h1 className={p.collection ? "collection-title" : undefined} title={p.collection?.name}>{p.collection?.name ?? "Your library."}</h1>{p.collection && <button className="btn sm ghost" onClick={p.onManageLists}>Manage lists</button>}</div>
-      <ReadingTimer series={lib.series} onOpenTime={p.onOpenTime} />
+      <div className="folio-heading"><div><span className="section-title">{p.collection ? "Your list" : "A private reading collection"}</span><h1 className={p.collection ? "collection-title" : undefined} title={p.collection?.name}>{p.collection?.name ?? "Your library."}</h1>{p.collection && <p className="small muted">{p.collection.seriesIds.length} series · Stored on this device</p>}</div>{p.collection && <div className="list-page-actions"><button className="btn primary" onClick={p.onAddToList}>Add series</button><button className="btn ghost" onClick={p.onManageLists}>Manage lists</button></div>}</div>
+      {settings.showReadingTimer && <ReadingTimer series={lib.series} onOpenTime={p.onOpenTime} />}
       <NowReading state={p.tab.state} series={tabSeries} onOpenSeries={p.onOpenSeries} onInspect={p.onInspect} />
 
       {dup && !p.query && (
@@ -225,7 +226,7 @@ export function HomeView(p: HomeProps) {
             onLayout={(layout) => void p.updateSettings(p.expanded ? { expandedLayout: layout } : { layout })}
             count={p.visible.length}
           />
-          {p.visible.length === 0 && p.collection && !p.query ? <div className="empty"><h2>This list is empty.</h2><p>Assign series from their menu, details, or a multiple selection.</p><button className="btn" onClick={p.onManageLists}>Manage lists</button></div> : p.visible.length === 0 ? (
+          {p.visible.length === 0 && p.collection && !p.query ? p.collection.seriesIds.length === 0 ? <div className="empty"><h2>This list is empty.</h2><p>Add series from your library. Reading status and progress stay unchanged.</p><button className="btn" onClick={p.onAddToList}>Add series to this list</button></div> : <div className="empty"><h2>No series match this list’s filters.</h2><button className="btn" onClick={() => p.setFilters(NO_FILTERS)}>Clear filters</button></div> : p.visible.length === 0 ? (
             <EmptyState onManual={p.onManual} view={p.view} query={p.query} total={lib.series.length} />
           ) : layout === "grid" ? (
             <>
