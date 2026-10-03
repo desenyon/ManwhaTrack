@@ -27,6 +27,14 @@ export function HandsScene({ className = "" }: { className?: string }) {
   </div>;
 }
 
+/** Existing local pixel artwork stays in the wide-screen gutters, behind no controls. */
+export function MarginScenery() {
+  const { ref, visible } = useArtworkVisibility<HTMLDivElement>();
+  return <div ref={ref} className="margin-scenery" data-visible={visible} aria-hidden="true">
+    {["left", "right"].map(side => <div className={`margin-panel margin-${side}`} key={side}><span className="margin-clouds" style={{ backgroundImage: "url(assets/violet-clouds.png)" }} /><span className="margin-landscape" style={{ backgroundImage: "url(assets/violet-landscape.png)" }} /></div>)}
+  </div>;
+}
+
 export function LibraryFooter({ count, motion, onMotion }: { count: number; motion: Settings["artworkMotion"]; onMotion: (motion: Settings["artworkMotion"]) => void }) {
   const { ref, visible } = useArtworkVisibility<HTMLElement>();
   const [height, setHeight] = useState(140);
