@@ -2,6 +2,7 @@
 
 import type { Series } from "../../shared/types/models";
 import type { TabState } from "../../shared/messages";
+import { FormatBadge } from "./SeriesItem";
 import { CONFIDENCE } from "../../detection/types";
 import { percent } from "../../shared/utils/format";
 import { sendToWorker } from "../../shared/messages";
@@ -19,7 +20,7 @@ export function NowReading({ state, series, onOpenSeries, onInspect }: { state?:
     const done = series.currentChapterId === state.chapterId && series.summary.currentCompleted;
     return (
       <section className="now" aria-label="Now reading">
-        <Cover coverId={series.coverId} title={series.title} />
+        <Cover coverId={series.coverId} title={series.title}><FormatBadge s={series} /></Cover>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="section-title" style={{ margin: 0 }}>Now reading</div>
           <div className="now-title truncate">{series.title}</div>
@@ -48,7 +49,7 @@ export function NowReading({ state, series, onOpenSeries, onInspect }: { state?:
   if (series && obs.kind === "series") {
     return (
       <section className="now" aria-label="Current page">
-        <Cover coverId={series.coverId} title={series.title} />
+        <Cover coverId={series.coverId} title={series.title}><FormatBadge s={series} /></Cover>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="section-title" style={{ margin: 0 }}>This page</div>
           <div className="truncate" style={{ fontWeight: 600 }}>{series.title}</div>
@@ -64,7 +65,7 @@ export function NowReading({ state, series, onOpenSeries, onInspect }: { state?:
     return (
       <section className="now" aria-label="Current page">
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="section-title" style={{ margin: 0 }}>Possibly a manhwa page</div>
+          <div className="section-title" style={{ margin: 0 }}>Possibly a reading page</div>
           <div className="truncate" style={{ fontWeight: 600 }}>{obs.series?.title}</div>
           <div className="small muted">Not tracked automatically: detection was not confident.</div>
         </div>
