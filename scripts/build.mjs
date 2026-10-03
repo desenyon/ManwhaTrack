@@ -34,6 +34,7 @@ const builds = [
 async function copyStatic() {
   await mkdir(outdir, { recursive: true });
   await cp(join(root, "public"), outdir, { recursive: true });
+  await cp(join(root, "PRIVACY.md"), join(outdir, "PRIVACY.md"));
   const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   const manifest = JSON.parse(await readFile(join(root, "src/manifest.json"), "utf8"));
   manifest.version = pkg.version;
