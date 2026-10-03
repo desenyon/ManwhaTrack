@@ -6,7 +6,7 @@ import { addManualSeries } from "../../storage/manual";
 import { publish } from "../../shared/bus";
 import { Dialog } from "../../ui/Menu";
 
-export function ManualSeriesDialog({ initial, onClose, onAdded }: { initial: { title?: string; url?: string }; onClose: () => void; onAdded: (series: Series) => void }) {
+export function ManualSeriesDialog({ initial, onClose, onAdded }: { initial: { title?: string; url?: string }; onClose: () => void; onAdded: (series: Series) => void | Promise<void> }) {
   const [title, setTitle] = useState(initial.title ?? "");
   const [url, setUrl] = useState(initial.url ?? "");
   const [status, setStatus] = useState<SeriesStatus>("planning");
@@ -23,7 +23,7 @@ export function ManualSeriesDialog({ initial, onClose, onAdded }: { initial: { t
         try {
           const series = await addManualSeries({ title, url, status });
           publish({ type: "library-changed", seriesIds: [series.id] });
-          onAdded(series);
+          await onAdded(series);
         } catch (err) {
           setError(err instanceof Error ? err.message : "Could not save this series.");
         } finally { setBusy(false); }
