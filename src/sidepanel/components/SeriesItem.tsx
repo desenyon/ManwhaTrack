@@ -51,6 +51,8 @@ export function SeriesProgress({ s, updates = true }: { s: Series; updates?: boo
   </div>;
 }
 
+export function FormatBadge({ s }: { s: Series }) { return <span className="format-badge">{s.format === "novel" ? "Novel" : "Manhwa"}</span>; }
+
 export function SourceBadge({ host }: { host: string }) {
   return <span className="source-badge" title={host}>{sourceLabel(host)}</span>;
 }
@@ -87,7 +89,7 @@ export const SeriesRow = memo(function SeriesRow({ s, host, selected, checked, s
       <div className="check-cell" onClick={(e) => e.stopPropagation()}>
         <input type="checkbox" aria-label={`Select ${s.title}`} checked={!!checked} onChange={(e) => onCheck?.(s, e.target.checked)} />
       </div>
-      <Cover coverId={s.coverId} title={s.title} />
+      <Cover coverId={s.coverId} title={s.title}><FormatBadge s={s} /></Cover>
       <div style={{ minWidth: 0 }}>
         <div className="row" style={{ gap: 4 }}>
           <button className="title truncate series-title" aria-label={`${selecting ? (checked ? "Deselect" : "Select") : "Details for"} ${s.title}`} onClick={(e) => { e.stopPropagation(); onOpen(s); }}>{s.title}</button>
@@ -158,6 +160,7 @@ export const SeriesTile = memo(function SeriesTile({ s, host, selected, checked,
     >
       <div className="check-cell" onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`Select ${s.title}`} checked={!!checked} onChange={(e) => onCheck?.(s, e.target.checked)} /></div>
       <Cover coverId={s.coverId} title={s.title}>
+        <FormatBadge s={s} />
         {s.summary.newCount > 0 && (
           <span className="corner">
             <UpdateBadge s={s} />
