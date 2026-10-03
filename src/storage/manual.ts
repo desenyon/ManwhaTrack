@@ -7,7 +7,7 @@ import { createSeries, createSource } from "./schema";
 import { getSeriesTx, putSeriesTx, refreshSeriesTx } from "./repositories/series";
 import { notifyProgressChanged } from "./repositories/chapters";
 
-export async function addManualSeries(input: { title: string; url: string; status?: SeriesStatus }): Promise<Series> {
+export async function addManualSeries(input: { title: string; url: string; status?: SeriesStatus; format?: Series["format"] }): Promise<Series> {
   const title = input.title.replace(/\s+/g, " ").trim();
   if (!title || title.length > 200) throw new Error("Enter a title of 1–200 characters.");
   const url = input.url.trim();
@@ -28,6 +28,7 @@ export async function addManualSeries(input: { title: string; url: string; statu
     }
     const series = createSeries({ title, status: input.status ?? "planning" });
     series.userFields = input.status ? ["title", "status"] : ["title"];
+    if (input.format === "novel" || input.format === "manhwa") { series.format = input.format; series.userFields.push("format"); }
     const added = createSource({ seriesId: series.id, seriesUrl: url });
     added.sourceTitle = title;
     series.preferredSourceId = added.id;
