@@ -16,6 +16,7 @@ import { HomeView } from "./views/HomeView";
 import { SeriesView } from "./views/SeriesView";
 import { InspectorView } from "./views/InspectorView";
 import { HistoryView } from "./views/HistoryView";
+import { AnalyticsView } from "./views/AnalyticsView";
 import { TimeView } from "./views/TimeView";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { ManualSeriesDialog } from "./components/ManualSeriesDialog";
@@ -28,7 +29,7 @@ import type { Collection } from "../shared/types/collections";
 import { MarginScenery } from "./components/Artwork";
 import { assignCollections } from "../storage/repositories/collections";
 
-type Route = { name: "home" } | { name: "series"; id: string } | { name: "inspector" } | { name: "history" } | { name: "time" };
+type Route = { name: "home" } | { name: "series"; id: string } | { name: "inspector" } | { name: "history" } | { name: "time" } | { name: "analytics"; seriesId?: string };
 
 function readSession<T>(key: string, fallback: T): T {
   try {
@@ -59,10 +60,16 @@ export function App({ expanded = false }: { expanded?: boolean }) {
   const tab = useActiveTab();
   const actions = useActions(lib, expanded ? { ...settings, continueIn: "new" } : settings, expanded ? undefined : tab.tabId);
 
-  const [route, setRoute] = useState<Route>(() => ({ name: expanded && location.hash === "#time" ? "time" : "home" }));
+  const [route, setRoute] = useState<Route>(() => ({ name: expanded && location.hash.startsWith("#analytics") ? "analytics" : expanded && location.hash === "#time" ? "time" : "home", ...(location.hash.startsWith("#analytics") ? { seriesId: new URLSearchParams(location.hash.split("?")[1]).get("series") ?? undefined } : {}) }));
   useEffect(() => {
-    if (expanded) history.replaceState(null, "", `${location.pathname}${location.search}${route.name === "time" ? "#time" : ""}`);
-  }, [expanded, route.name]);
+    if (expanded) history.replaceState(null, "", `${location.pathname}${location.search}${route.name === "analytics" ? `#analytics${route.seriesId ? `?series=${encodeURIComponent(route.seriesId)}` : ""}` : route.name === "time" ? "#time" : ""}`);
+  }, [expanded, route]);
+  useEffect(() => {
+    if (!expanded) return;
+    const onHash = () => setRoute(location.hash.startsWith("#analytics") ? { name:"analytics", seriesId:new URLSearchParams(location.hash.split("?")[1]).get("series") ?? undefined } : location.hash === "#time" ? { name:"time" } : { name:"home" });
+    addEventListener("hashchange",onHash);
+    return () => removeEventListener("hashchange",onHash);
+  }, [expanded]);
   const [view, setViewState] = useState<ViewId>(() => readSession("view", "continue"));
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [query, setQuery] = useState("");
@@ -106,6 +113,8 @@ export function App({ expanded = false }: { expanded?: boolean }) {
   }, [collections.loaded, collections.error, currentCollection, view]);
   const openExpanded = () => void chrome.tabs.create({ url: chrome.runtime.getURL("library.html") });
   const openTime = () => { if (expanded) setRoute({ name: "time" }); else void chrome.tabs.create({ url: chrome.runtime.getURL("library.html#time") }); };
+
+  const openAnalytics = (seriesId?: string) => { if (expanded) setRoute({ name: "analytics", seriesId }); else void chrome.tabs.create({ url: chrome.runtime.getURL(`library.html#analytics${seriesId ? `?series=${encodeURIComponent(seriesId)}` : ""}`) }); };
 
   // Land on "Continue" when there is something to continue; otherwise show everything.
   useEffect(() => {
@@ -319,6 +328,7 @@ export function App({ expanded = false }: { expanded?: boolean }) {
         { label: selecting ? "Stop selecting" : "Select multiple", onSelect: () => setSelecting(!selecting) },
         { label: "Reading history", onSelect: () => setRoute({ name: "history" }) },
         { label: "Time tracking", onSelect: openTime },
+        { label: "Analytics", onSelect: () => openAnalytics() },
         { label: "Detection Inspector", onSelect: () => setRoute({ name: "inspector" }) },
         { kind: "separator" },
         { label: "Command palette", hint: displayShortcut(settings.shortcuts.palette), onSelect: () => setPalette(true) },
@@ -362,9 +372,9 @@ export function App({ expanded = false }: { expanded?: boolean }) {
           {collections.collections.map(c => <button key={c.id} aria-pressed={route.name === "home" && currentCollection?.id === c.id} onClick={() => openCollection(c.id)}><span className="truncate">{c.name}</span><span className="count">{c.seriesIds.length}</span></button>)}
           {!collections.collections.length && <button className="rail-create" onClick={() => setManageLists(true)}>Create a list</button>}
         </div>
-        <div className="rail-group rail-tools"><button aria-pressed={route.name === "time"} onClick={openTime}><Icon name="clock" />Time tracking</button><button onClick={() => void chrome.runtime.openOptionsPage()}><Icon name="settings" />Settings & backup</button><p className="small faint">Stored on this device.</p></div>
+        <div className="rail-group rail-tools"><button aria-pressed={route.name === "analytics"} onClick={() => openAnalytics()}><Icon name="chart" />Analytics</button><button aria-pressed={route.name === "time"} onClick={openTime}><Icon name="clock" />Time tracking</button><button onClick={() => void chrome.runtime.openOptionsPage()}><Icon name="settings" />Settings & backup</button><p className="small faint">Stored on this device.</p></div>
       </aside>}
-      <main className="scroll" aria-label="Library content" tabIndex={0} ref={scrollRef} key={route.name === "series" ? route.id : route.name}>
+      <main className="scroll" aria-label="Library content" tabIndex={0} ref={scrollRef} key={route.name === "series" ? route.id : route.name === "analytics" ? `analytics:${route.seriesId ?? "all"}` : route.name}>
         {route.name === "home" && (
           <HomeView
             expanded={expanded}
@@ -406,7 +416,8 @@ export function App({ expanded = false }: { expanded?: boolean }) {
             scrollRef={scrollRef}
           />
         )}
-        {route.name === "series" && <SeriesView id={route.id} lib={lib} actions={actions} onBack={() => setRoute({ name: "home" })} onOpenSeries={openSeries} />}
+        {route.name === "series" && <SeriesView id={route.id} lib={lib} actions={actions} onBack={() => setRoute({ name: "home" })} onOpenSeries={openSeries} onOpenAnalytics={() => openAnalytics(route.name === "series" ? route.id : undefined)} />}
+        {route.name === "analytics" && <AnalyticsView series={lib.series} seriesId={route.seriesId} onBack={() => route.seriesId ? openSeries(route.seriesId) : setRoute({ name: "home" })} onOpenSeries={openSeries} onAnalyzeSeries={openAnalytics} />}
         {route.name === "inspector" && <InspectorView onManual={() => void openManual()} state={tab.state} series={tabSeries} onBack={() => setRoute({ name: "home" })} onOpenSeries={openSeries} />}
         {route.name === "history" && <HistoryView byId={lib.byId} onBack={() => setRoute({ name: "home" })} onOpenSeries={openSeries} />}
         {route.name === "time" && <TimeView series={lib.series} onBack={() => setRoute({ name: "home" })} onOpenSeries={openSeries} />}
